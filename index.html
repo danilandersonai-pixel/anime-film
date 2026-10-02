@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Мишка</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caveat:wght@400..700&family=Golos+Text:wght@400..600&display=swap">
+<style>
+/* local-fonts:start — запасная копия шрифта, чтобы мультфильм работал без интернета */
+@font-face { font-family: 'Caveat Local'; font-weight: 400 700; font-display: block;
+  src: url(fonts/caveat-cyrillic.woff2) format('woff2'); unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: 'Caveat Local'; font-weight: 400 700; font-display: block;
+  src: url(fonts/caveat-latin.woff2) format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+2212; }
+/* local-fonts:end */
+
+/* Затемнённый «просмотровый зал»: лист бумаги с мультфильмом светится на тёмном графите.
+   Перемотка сделана как детский ростомер с отметками-главами. */
+:root {
+  --bg: #1c1a18;          /* тёмный графит с тёплым оттенком */
+  --surface: #262320;
+  --rule: #3b3732;
+  --paper: #ebe2cd;       /* цвет бумаги из мультфильма */
+  --muted: #a69d8d;
+  --lead: #8d9199;        /* серый грифель */
+  --pencil: #e2b13c;      /* жёлтый карандаш — единственный акцент */
+  --display: 'Caveat', 'Caveat Local', 'Segoe Print', cursive;
+  --ui: 'Golos Text', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { background: var(--bg); color: var(--paper); }
+body { margin: 0; font: 15px/1.5 var(--ui); }
+.wrap { max-width: 1280px; margin: 0 auto; padding: 28px 16px 40px; display: grid; gap: 18px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 20px; }
+h1 { margin: 0; font: 700 clamp(44px, 7vw, 64px)/1 var(--display); letter-spacing: 0.01em; text-wrap: balance; }
+header p { margin: 0; max-width: 62ch; color: var(--muted); min-width: 0; }
+.stage { position: relative; margin: 0; aspect-ratio: 16 / 9; max-width: 100%; background: var(--paper);
+  border-radius: 3px; overflow: hidden; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.04); }
+canvas { display: block; width: 100%; height: 100%; cursor: pointer; }
+.bigplay { position: absolute; left: 50%; bottom: 7%; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 12px;
+  padding: 12px 26px 12px 20px; border: 0; border-radius: 999px; background: var(--bg); color: var(--paper);
+  font: 600 17px/1 var(--ui); white-space: nowrap; cursor: pointer; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); }
+.bigplay svg { width: 22px; height: 22px; fill: var(--pencil); }
+.bigplay:hover { background: #2c2925; }
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 40px; min-width: 40px; padding: 0 12px;
+  border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); color: var(--paper); font: 500 14px/1 var(--ui); cursor: pointer; }
+.btn:hover { border-color: var(--lead); }
+.btn svg { width: 18px; height: 18px; fill: currentColor; }
+.btn[aria-pressed="true"] { border-color: var(--pencil); }
+#play { width: 48px; height: 48px; border-radius: 50%; background: var(--paper); color: var(--bg); border: 0; }
+#play svg { width: 20px; height: 20px; }
+.clock { font: 500 14px/1 var(--ui); font-variant-numeric: tabular-nums; color: var(--muted); min-width: 92px; }
+/* ростомер */
+.ruler { position: relative; flex: 1 1 360px; min-width: 0; height: 58px; }
+.ruler .scale { position: absolute; left: 0; right: 0; top: 10px; height: 22px; border-top: 2px solid var(--lead);
+  background:
+    repeating-linear-gradient(90deg, var(--lead) 0 1px, transparent 1px calc(100% / 58)) top left / 100% 7px no-repeat,
+    repeating-linear-gradient(90deg, var(--lead) 0 2px, transparent 2px calc(100% / 11.6)) top left / 100% 13px no-repeat; opacity: 0.8; }
+.ruler .done { position: absolute; left: 0; top: 9px; height: 4px; width: 0; background: var(--pencil); border-radius: 2px; }
+.ruler ol { list-style: none; margin: 0; padding: 0; position: absolute; left: 0; right: 0; top: 32px; height: 24px; }
+.ruler li { position: absolute; transform: translateX(-2px); font: 600 19px/1 var(--display); color: var(--muted); white-space: nowrap; }
+.ruler li.on { color: var(--paper); }
+.ruler li::before { content: ''; position: absolute; left: 1px; top: -22px; width: 2px; height: 18px; background: var(--paper); opacity: 0.55; }
+.ruler input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; appearance: none; -webkit-appearance: none; background: transparent; cursor: pointer; }
+.ruler input::-webkit-slider-runnable-track { height: 100%; background: transparent; }
+.ruler input::-moz-range-track { height: 100%; background: transparent; }
+.ruler input::-webkit-slider-thumb { -webkit-appearance: none; width: 6px; height: 34px; margin-top: 0; border-radius: 3px; background: var(--pencil); }
+.ruler input::-moz-range-thumb { width: 6px; height: 34px; border: 0; border-radius: 3px; background: var(--pencil); }
+.ruler input:focus-visible { outline: 2px solid var(--pencil); outline-offset: 4px; border-radius: 4px; }
+.row2 { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 24px; }
+.palette { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.palette .label { color: var(--muted); font-size: 14px; margin-right: 4px; }
+.swatch { width: 14px; height: 14px; border-radius: 3px; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25); }
+.note { margin: 0; color: var(--muted); font-size: 14px; max-width: 70ch; min-width: 0; }
+.note code { font: 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--paper); background: var(--surface); padding: 2px 5px; border-radius: 4px; }
+button:focus-visible { outline: 2px solid var(--pencil); outline-offset: 2px; }
+@media (max-width: 560px) {
+  .wrap { padding-top: 18px; }
+  .bigplay { bottom: 5%; padding: 8px 16px 8px 12px; gap: 8px; font-size: 14px; }
+  .bigplay svg { width: 16px; height: 16px; }
+  .ruler li { font-size: 16px; }
+  .ruler li.minor { display: none; }
+}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header>
+    <h1>Мишка</h1>
+    <p>Карандашный мультфильм о плюшевом мишке, который семьдесят лет переходил в одной семье от бабушки к правнучке. 58 секунд, рисунок и звук собраны кодом.</p>
+  </header>
+
+  <figure class="stage">
+    <canvas id="film" width="1920" height="1080" role="img" aria-label="Мультфильм «Мишка»: карандашный рисунок на бумаге"></canvas>
+    <button id="bigplay" class="bigplay" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l12.5-7.5z"/></svg>
+      Смотреть со звуком
+    </button>
+  </figure>
+
+  <div class="controls">
+    <button id="play" class="btn" type="button" aria-label="Смотреть">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path id="playIcon" d="M7 4.5v15l12.5-7.5z"/></svg>
+    </button>
+    <span class="clock" id="clock">0:00 / 0:58</span>
+    <div class="ruler">
+      <div class="scale"></div>
+      <div class="done" id="done"></div>
+      <ol id="chapters"></ol>
+      <input type="range" id="seek" min="0" max="58" step="0.01" value="0" aria-label="Перемотка">
+    </div>
+    <button id="mute" class="btn" type="button" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path id="muteIcon" d="M4 9h4l5-4v14l-5-4H4z M16 8.5a5 5 0 0 1 0 7 M18.5 6a8.5 8.5 0 0 1 0 12" stroke="currentColor" stroke-width="1.8" fill="currentColor" stroke-linecap="round"/></svg>
+      <span id="muteText">Звук включён</span>
+    </button>
+  </div>
+
+  <div class="row2">
+    <div class="palette" role="radiogroup" aria-label="Палитра" id="palette">
+      <span class="label">Бумага:</span>
+    </div>
+    <p class="note">Палитра меняется одной строкой <code>THEME</code> в <code>js/story.js</code>. Пробел — пауза, стрелки — перемотка по секунде.</p>
+  </div>
+</main>
+
+<script src="js/pencil.js"></script>
+<script src="js/story.js"></script>
+<script src="js/sound.js"></script>
+<script src="js/player.js"></script>
+</body>
+</html>
