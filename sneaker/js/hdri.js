@@ -4,9 +4,14 @@
 // обратно в яркости до сотен единиц и становится текстурой окружения.
 import * as THREE from 'three';
 
+// файл как blob; если страница запрещает fetch — через обычную картинку
+async function source(url) {
+  try { const r = await fetch(url); if (!r.ok) throw new Error(r.status); return await r.blob(); }
+  catch (e) { const img = new Image(); img.src = url; await img.decode(); return img; }
+}
+
 export async function loadHDRI(url) {
-  const blob = await (await fetch(url)).blob();
-  const bmp = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
+  const bmp = await createImageBitmap(await source(url), { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
   const W = bmp.width, H = bmp.height / 2;
   const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
   const ctx = c.getContext('2d', { willReadFrequently: true });

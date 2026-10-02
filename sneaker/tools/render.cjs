@@ -41,7 +41,7 @@ function loudness(file) {
   const t0 = Date.now();
   for (let i = 0; i < n; i++) {
     await page.evaluate((x) => window.__ad.render(x), i / fps);
-    const buf = await stage.screenshot({ type: 'png' });
+    const buf = await stage.screenshot({ type: 'png', timeout: 300000 }); // кадр со смазом рисуется до минуты
     if (!ff.stdin.write(buf)) await new Promise((r) => ff.stdin.once('drain', r));
     if (i % 24 === 0) console.log(`  ${i}/${n}  ${((Date.now() - t0) / 1000).toFixed(0)} с`);
   }
