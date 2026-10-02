@@ -3,6 +3,7 @@
 # нижняя — общий показатель степени (в канале R). Расшифровка — js/hdri.js.
 # python3 tools/pack-hdr.py in.hdr out.png [ширина] [--dark]  (+ out.preview.jpg для глаза)
 # --dark: стены и пол студии темнеют, лампы остаются яркими — тёмная съёмочная студия.
+# --floor=k: только нижняя полусфера (без ламп) ×k.
 import sys, re, numpy as np
 from PIL import Image
 
@@ -58,6 +59,14 @@ if '--dark' in sys.argv:
     below = 1 - 0.9 * sm(0.0, 0.12, -lat)                   # ниже горизонта ещё ×0.1
     lamp = sm(2.0, 8.0, lum0)
     img = img * (keep * (below[:, None] + (1 - below[:, None]) * lamp))[..., None]
+fl = [a for a in sys.argv if a.startswith('--floor=')]
+if fl:  # --floor=k: всё ниже горизонта (кроме ламп) ×k — там будет свой пол
+    k = float(fl[0].split('=')[1]); H0 = img.shape[0]
+    lum0 = img @ [0.2126, 0.7152, 0.0722]
+    lat = (0.5 - (np.arange(H0) + 0.5) / H0) * np.pi
+    t = np.clip(-lat / 0.08, 0, 1); below = 1 - (1 - k) * t * t * (3 - 2 * t)
+    lamp = np.clip((lum0 - 2.0) / 6.0, 0, 1)
+    img = img * (below[:, None] + (1 - below[:, None]) * lamp)[..., None]
 rgb, ee = float_to_rgbe(img)
 H, W = rgb.shape[:2]
 packed = np.zeros((H * 2, W, 3), np.uint8)

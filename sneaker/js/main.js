@@ -1,13 +1,15 @@
 // main.js — связывает модель, студию, режиссуру, надписи, звук и плеер.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { buildShoe, COLORWAYS } from './shoe.js';
+import { buildShoe, COLORWAYS, shoeTransform } from './shoe.js';
 import { createStage } from './stage.js';
 import { evaluate, DURATION, GLOWS, setRig } from './timeline.js';
 import { createOverlay, CALLOUTS } from './overlay.js';
 import { renderTrack, toWav } from './audio.js';
 import { loadHDRI } from './hdri.js';
 import { scans } from './textures.js';
+import { loadAsphalt, BG_YAW } from './street.js';
+import { createWater } from './water.js';
 
 const CAPTURE = new URLSearchParams(location.search).has('capture');
 const COVER_T = 30.2;   // обложка до нажатия: готовый пэкшот
@@ -21,20 +23,21 @@ try { await Promise.race([Promise.all(['800 100px Unbounded', '600 30px Unbounde
 const canvas = $('gl');
 const stageEl = $('stage');
 const W0 = 1920, H0 = 1080;
-const stage = createStage(canvas, { width: W0, height: H0, pixelRatio: 1 });
-// настоящая фотостудия (HDRI); если не загрузилась — остаётся нарисованная
-try { stage.setEnvironment(await loadHDRI('assets/studio.png')); } catch (e) { console.warn('HDRI не загрузилась', e); }
+// скан асфальта нужен до сборки улицы
+const asphalt = await loadAsphalt();
+const stage = createStage(canvas, { width: W0, height: H0, pixelRatio: 1, asphalt });
+// ночной город (HDRI Shanghai Bund): фон и отражения; если не загрузился — остаётся нарисованная студия
+try { stage.setEnvironment(await loadHDRI('assets/city.png')); } catch (e) { console.warn('HDRI не загрузилась', e); }
 // скан ткани для канта и языка; без него кроссовок соберётся с нарисованной тканью
 let jersey = null;
 try { jersey = await scans(); } catch (e) { console.warn('скан ткани не загрузился', e); }
 const shoe = buildShoe({ jersey });
 stage.adopt(shoe.root);
 setRig(shoe.macro);
-stage.bigText.userData.redraw();
 const overlay = createOverlay($('ov'));
 const cam = stage.camera;
 const tmp = new THREE.Vector3(), tmpQ = new THREE.Quaternion();
-const BASE_Y = 0.024; // подмётка стоит на полу
+const water = createWater(stage.scene, shoe.materials.drop, evaluate);
 
 // ---------------------------------------------------------------------
 // Состояние кадра → сцена
@@ -47,16 +50,7 @@ function apply(S, cwOverride) {
 
   // кроссовок: поворот вокруг вертикали, наклон носка, крен; опора — пятка или носок
   const r = shoe.root, sh = S.shoe;
-  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(sh.roll, sh.yaw, sh.pitch, 'YZX'));
-  r.quaternion.copy(q);
-  const base = new THREE.Vector3(sh.pos[0], sh.pos[1] + BASE_Y, sh.pos[2]);
-  if (sh.pivot) {
-    const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), sh.yaw);
-    const local = new THREE.Vector3(sh.pivot[0], sh.pivot[1], 0);
-    const world = local.clone().applyQuaternion(qy).add(base);
-    base.copy(world.sub(local.applyQuaternion(q)));
-  }
-  r.position.copy(base);
+  shoeTransform(sh, r.position, r.quaternion);
   const e = sh.explode, G = shoe.groups;
   G.upper.position.set(0, 0.5 * e - sh.squash * 0.4, 0);
   G.foamTop.position.set(0, 0.06 * e, 0);
@@ -81,29 +75,18 @@ function apply(S, cwOverride) {
   L.rimR.intensity = S.light.rimR; L.rimR.color.copy(c1).lerp(new THREE.Color('#ffffff'), 0.15);
   L.sweep.intensity = S.light.sweep;
   L.sweep.position.set(...(S.light.sweepPos || [0, 1.5, 2.4])); L.sweep.lookAt(...(S.light.sweepLook || [0, 0.5, 0]));
-  stage.sweepBar.visible = false;
-  stage.scene.environmentRotation.set(0, S.light.envRot || 0, 0);
+  stage.scene.environmentRotation.set(0, BG_YAW + 0.3 * (S.light.envRot || 0), 0);
   L.sun.intensity = S.light.sun;
   stage.scene.environmentIntensity = S.light.env;
   // пена светится изнутри сильнее, когда в студии светлее
   shoe.materials.foamTop.userData.sssAmt.value = shoe.materials.foamBottom.userData.sssAmt.value = 0.1 * S.light.env;
 
-  // фон, полосы, надпись, эффекты
-  stage.bg.uniforms.glow.value.copy(c1); stage.bg.uniforms.glow2.value.copy(c2);
-  stage.bg.uniforms.glowAmt.value = S.bg.glowAmt; stage.bg.uniforms.glow2Amt.value = S.bg.glow2Amt;
-  stage.bg.uniforms.glowDir.value.set(...S.bg.glowDir).normalize();
-  stage.bg.uniforms.base.value.set('#0b0c10').multiplyScalar(S.bg.base === undefined ? 1 : S.bg.base);
-  stage.barMats[0].color.copy(c1).multiplyScalar(4 * S.bg.bars); stage.barMats[1].color.copy(c2).multiplyScalar(3 * S.bg.bars);
-  stage.bars.forEach((b) => { b.visible = S.bg.bars > 0.01; });
-  stage.bigText.material.opacity = S.bigText.opacity;
-  stage.bigText.position.x = S.bigText.x;
-  stage.bigText.material.color.copy(c1).lerp(new THREE.Color('#ffffff'), 0.5);
-  stage.setStreaks(S.t, S.streaks);
-  stage.floor.uniforms.ring.value = S.ring.amt; stage.floor.uniforms.ringR.value = S.ring.r; stage.floor.uniforms.ringColor.value.copy(c1);
-  stage.floor.uniforms.spot.value = S.spot;
+  // улица: дождь, лужи, огни, машина, молния; вода в движении
+  stage.street.update(S, L.rimL, L.rimR);
+  water.update(S);
   stage.bokeh.enabled = S.bokeh.on;
   if (S.bokeh.on) { stage.bokeh.uniforms.focus.value = S.bokeh.focus; stage.bokeh.uniforms.aperture.value = S.bokeh.aperture; stage.bokeh.uniforms.maxblur.value = S.bokeh.maxblur; }
-  stage.bloom.strength = S.bloom;
+  stage.bloom.strength = S.bloom * 0.7; // ночью ярких точек много — свечение мягче
   stage.final.uniforms.flash.value = S.flash;
   stage.final.uniforms.fade.value = S.fade;
   stage.final.uniforms.time.value = S.t;
@@ -125,7 +108,7 @@ function project(part) {
 // зависит от того, насколько далеко на экране сдвигается кроссовок.
 // ---------------------------------------------------------------------
 const MB = CAPTURE && !new URLSearchParams(location.search).has('nomb');
-const SHUTTER = 0.5 / 24, MB_STEP = 5, MB_MAX = 8;
+const SHUTTER = 0.5 / 24, MB_STEP = 6, MB_MAX = 10;
 const PROBE = [[-1.4, 0.85, 0], [1.45, 0.3, 0], [-1.2, 0.02, 0.35], [1.2, 0.02, -0.3], [0.3, 0.75, 0], [0, 0.5, 0.45], [0, 0.5, -0.45]];
 function screenProbe(t) {
   apply(evaluate(t));
@@ -134,13 +117,18 @@ function screenProbe(t) {
   for (const part of CALLOUTS.map((c) => c.part)) out.push(tmp.set(...shoe.anchors[part]).applyMatrix4(shoe.groups[part].matrixWorld).project(cam).toArray());
   return out;
 }
+function camTurnPixels(t) {
+  const A = evaluate(t).cam, B = evaluate(t + SHUTTER).cam;
+  const dir = (c) => new THREE.Vector3(c.target[0] - c.pos[0], c.target[1] - c.pos[1], c.target[2] - c.pos[2]).normalize();
+  return dir(A).angleTo(dir(B)) / THREE.MathUtils.degToRad(A.fov) * H0 + Math.abs(B.roll - A.roll) * H0 * 0.5;
+}
 function motionPixels(t) {
   // окно затвора начинается в момент кадра — так смаз не перетекает через монтажную склейку
   const a = screenProbe(t), b = screenProbe(t + SHUTTER);
   let d = 0;
   const vis = (p) => Math.abs(p[2]) < 1 && Math.abs(p[0]) < 1.2 && Math.abs(p[1]) < 1.2; // только точки в кадре
   a.forEach((p, i) => { const q = b[i]; if (vis(p) && vis(q)) d = Math.max(d, Math.hypot((p[0] - q[0]) * W0 / 2, (p[1] - q[1]) * H0 / 2)); });
-  return d;
+  return Math.max(d, camTurnPixels(t));
 }
 
 function renderAt(t) {
@@ -150,7 +138,12 @@ function renderAt(t) {
   shoe.root.updateMatrixWorld(true);
   overlay.update(t, S, project, accent);
   if (n === 1) stage.render(t);
-  else stage.render(t, n, (i) => { apply(evaluate(t + SHUTTER * (i + 0.5) / n)); shoe.root.updateMatrixWorld(true); });
+  else {
+    // на сильном смазе затенение в щелях не разглядеть — экономим его
+    const ao = stage.gtao.enabled; if (n >= 6) stage.gtao.enabled = false;
+    stage.render(t, n, (i) => { apply(evaluate(t + SHUTTER * (i + 0.5) / n)); shoe.root.updateMatrixWorld(true); });
+    stage.gtao.enabled = ao;
+  }
   return S;
 }
 
@@ -208,7 +201,6 @@ function initPlayer() {
     if (mode === 'explore') {
       const S = evaluate(EXPLORE_T);
       S.shoe = { pos: [0, 0, 0], yaw: 0, pitch: 0, roll: 0, pivot: null, explode: 0, squash: 0, partYaw: 0 };
-      S.bigText.opacity = 0.08;
       S.flash = 0; S.fade = 0;
       const accent = apply(S, cwPick || 'ember');
       cam.position.copy(controls.object.position);

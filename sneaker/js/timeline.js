@@ -47,6 +47,24 @@ export function setRig(macro) {
 function colorwayAt(t) { let c = 'ember'; for (const [t0, n] of COLOR_SWITCH) if (t >= t0) c = n; return c; }
 function flashAt(t) { let f = 0; for (const [t0, a] of FLASHES) if (t >= t0) f = Math.max(f, a * Math.exp(-(t - t0) * 10)); return f; }
 
+// ---------------------------------------------------------------------
+// Время действия: в момент удара пятки в лужу действие замедляется (рапид ×0,22),
+// потом разгоняется (×1,6) и догоняет реальное время. Дождь, рябь и всплеск
+// живут во времени действия, поэтому в рапиде замедляются вместе с кроссовком.
+// ---------------------------------------------------------------------
+const WARP_DT = 1 / 480, WARP = new Float32Array(Math.ceil(33 / WARP_DT) + 2);
+(() => {
+  let w = 0;
+  for (let i = 1; i < WARP.length; i++) {
+    const t = i * WARP_DT;
+    let sp = 1;
+    if (t > IMPACT && t < IMPACT + 0.95) sp = 1 - 0.78 * smooth(seg(t, IMPACT, IMPACT + 0.07)) * (1 - smooth(seg(t, IMPACT + 0.72, IMPACT + 0.95)));
+    else if (t >= IMPACT + 0.95) sp = 1 + 0.6 * smooth(clamp((t - w) / 0.06));
+    w += sp * WARP_DT; WARP[i] = w;
+  }
+})();
+export function actionTime(t) { const k = clamp(t / WARP_DT, 0, WARP.length - 1.001), i = Math.floor(k); return WARP[i] + (WARP[i + 1] - WARP[i]) * (k - i); }
+
 const ORDER = Object.entries(SHOTS).sort((a, b) => a[1] - b[1]);
 export function shotAt(t) { let s = ORDER[0][0]; for (const [n, t0] of ORDER) if (t >= t0) s = n; return s; }
 
@@ -59,10 +77,29 @@ export function evaluate(t) {
     bg: { glowAmt: 0.4, glow2Amt: 0.08, glowDir: [0.3, 0.25, -1], bars: 0, base: 1 },
     bigText: { opacity: 0, x: 0 }, streaks: 0, ring: { amt: 0, r: 0 },
     bokeh: { on: false, focus: 3, aperture: 0.002, maxblur: 0.006 }, bloom: 0.45, spot: 0.08,
+    // улица: дождь (время дождя — замедленное ×0,3, как съёмка рапидом), отражения, туман, огни, машина, молния
+    street: { rainT: actionTime(t) * 0.3, rain: 1, reflect: 1, mist: 0.05, bokeh: 1, bg: 0.15, lightning: 0, car: { on: 0, p: 0, dir: 1, head: 1, tail: 1 } },
+    splash: -1, drip: 0, impactT: IMPACT,
   };
   SHOT_FN[S.shot](t, S);
   handheld(t, S);
+  whip(t, S);
   return S;
+}
+
+// хлёсткая панорама на склейке: камера резко уводится в сторону в конце плана
+// и «прилетает» в следующий; смаз движения превращает это в рывок
+const WHIPS = [[12, 1], [20, -1], [25, 1]];
+function whip(t, S) {
+  for (const [T, dir] of WHIPS) {
+    let a = 0;
+    if (t >= T - 0.14 && t < T) a = dir * 0.6 * easeIn(seg(t, T - 0.14, T));
+    else if (t >= T && t < T + 0.18) a = -dir * 0.6 * Math.pow(1 - seg(t, T, T + 0.18), 3);
+    if (!a) continue;
+    const p = S.cam.pos, d = [S.cam.target[0] - p[0], S.cam.target[1] - p[1], S.cam.target[2] - p[2]];
+    const c = Math.cos(a), sn = Math.sin(a);
+    S.cam.target = [p[0] + d[0] * c + d[2] * sn, S.cam.target[1], p[2] - d[0] * sn + d[2] * c];
+  }
 }
 
 // «живая» камера: медленный дрейф и лёгкая дрожь, как у оператора со стабилизатором.
@@ -88,8 +125,13 @@ const SHOT_FN = {
     S.cam = { pos: mix3([3.6, 0.5, 3.0], [2.7, 0.62, 2.35], k), target: mix3([-0.1, 0.55, 0], [0, 0.6, 0], k), fov: 30, roll: 0.02 };
     S.fade = 1 - smooth(seg(t, 0, 0.7));
     const a = lerp(-2.6, 1.1, easeInOut(seg(t, 0.2, 3.9)));
-    S.light = { key: 0.4 * smooth(seg(t, 2.6, 4)), rimL: 9 * smooth(seg(t, 1.0, 3.0)), rimR: 13 * smooth(seg(t, 0.4, 2.2)), sweep: 34, sweepPos: [Math.sin(a) * 3, 1.2, Math.cos(a) * 3], sweepLook: c, sun: 0.1, env: lerp(0.02, 0.18, seg(t, 1, 4)), envRot: lerp(-1.2, 0.3, k) };
-    S.bg = { glowAmt: 0.22 * seg(t, 1.5, 4), glow2Amt: 0.04, glowDir: [0.6, 0.15, -1], bars: 0, base: lerp(0.3, 1, seg(t, 0, 3)) };
+    void a;
+    // молния: три вспышки подряд — на мгновение видно всю улицу, дождь и силуэт
+    const L = (t0, d, amp) => amp * Math.exp(-Math.max(0, t - t0) / d) * (t >= t0 ? 1 : 0);
+    const lightning = L(0.55, 0.05, 1) + L(0.66, 0.04, 0.6) + L(0.82, 0.12, 0.9);
+    S.light = { key: 1.6 * smooth(seg(t, 2.8, 4)), rimL: 9 * smooth(seg(t, 1.0, 3.0)), rimR: 13 * smooth(seg(t, 0.4, 2.2)), sweep: 0, sun: 0.15 + 2.4 * lightning, env: lerp(0.06, 0.4, seg(t, 1, 4)) + 0.8 * lightning, envRot: lerp(-0.3, 0.2, k) };
+    // за кроссовком проезжает машина: фары скользят по нему, длинные отражения бегут по асфальту
+    S.street = { ...S.street, lightning, bg: lerp(0.05, 0.15, smooth(seg(t, 0.3, 3.5))), car: { on: 1, p: seg(t, 1.25, 3.85), dir: 1, head: 1, tail: 1 } };
     S.bloom = 0.6; S.spot = 0.02;
   },
   // ---- 2. Макро: трикотаж, скользящий свет выявляет петли
@@ -98,6 +140,7 @@ const SHOT_FN = {
     const p = add3(R.p, [1, 0, 0], lerp(-0.07, 0.07, k));
     S.cam = { pos: add3(add3(p, R.n, 0.3), [-0.3, 0.1, 0]), target: add3(p, [0.05, 0, 0]), fov: 30, roll: lerp(-0.05, 0.03, k) };
     focusOn(S, p, 0.016, 0.02);
+    S.street.rain = 0.12; S.street.bokeh = 0.7; // у самого объектива струи похожи на царапины
     S.light = { key: 1.2, rimL: 4, rimR: 22, sweep: 30, sweepPos: add3(p, [lerp(-1.4, 1.4, k), 0.25, 0.45]), sweepLook: p, sun: 0.35, env: 0.35, envRot: lerp(0, 0.6, k) };
     S.bg = { glowAmt: 0.25, glow2Amt: 0.05, glowDir: [0.3, 0.2, -1], bars: 0, base: 1 };
     S.bloom = 0.45; S.spot = 0.05;
@@ -107,6 +150,7 @@ const SHOT_FN = {
     const k = easeInOut(seg(t, 6, 8)), L = RIG.laces;
     S.cam = { pos: add3(L[0], [lerp(0.55, 0.42, k), lerp(0.2, 0.16, k), lerp(0.18, 0.1, k)]), target: mix3(L[2], L[3], 0.5), fov: 34, roll: -0.04 };
     focusOn(S, mix3(L[1], L[5], easeInOut(seg(t, 6.4, 7.4))), 0.012, 0.016);
+    S.street.rain = 0.6; S.street.bokeh = 0.7;
     S.light = { key: 2.2, rimL: 10, rimR: 14, sweep: 8, sweepPos: [0.6, 1.8, lerp(-1.2, 1.2, k)], sweepLook: L[3], sun: 0.45, env: 0.32, envRot: lerp(0.4, 1.0, k) };
     S.bg = { glowAmt: 0.3, glow2Amt: 0.06, glowDir: [0.6, 0.2, -1], bars: 0, base: 1 };
     S.bloom = 0.45; S.spot = 0.06;
@@ -147,6 +191,7 @@ const SHOT_FN = {
     const k = easeInOut(seg(t, 14, 16)), up = easeOut(seg(t, 14, 15));
     S.shoe.pos = [0, 0.9 * up, 0];
     S.shoe.roll = -2.5 * easeInOut(seg(t, 14.2, 15.4));
+    S.drip = 1;
     S.shoe.yaw = lerp(-0.25, -0.05, k);
     S.cam = { pos: mix3([2.5, 0.28, 2.9], [2.1, 0.22, 2.4], k), target: mix3([0, 0.55, 0], [0, 0.95, 0], k), fov: 32, roll: 0.04 };
     S.light = { key: 5, rimL: 14, rimR: 18, sweep: 18, sweepPos: [0, 0.15, 2.6], sweepLook: [0, 1, 0], sun: 0.9, env: 0.5, envRot: lerp(-0.5, 0.5, k) };
@@ -168,7 +213,9 @@ const SHOT_FN = {
     S.bloom = 0.45; S.spot = 0.1;
   },
   // ---- 9. Бег: камера у пола, удар пяткой, сжатие пены, волна, отталкивание
-  run(t, S) {
+  run(t0, S) {
+    // всё действие плана идёт во «времени действия»: на ударе — рапид, потом разгон
+    const t = actionTime(t0);
     const k = easeInOut(seg(t, 20, 23));
     const L = 1.32;
     let y = 0, pitch = 0, pivot = null;
@@ -179,11 +226,11 @@ const SHOT_FN = {
     S.shoe.pos = [0, y, 0]; S.shoe.pitch = pitch; S.shoe.pivot = pivot;
     S.shoe.squash = 0.13 * Math.sin(Math.PI * seg(t, IMPACT + 0.05, IMPACT + 0.62));
     S.cam = { pos: mix3([1.2, 0.36 + y * 0.5, 5.0], [-0.35, 0.32 + y * 0.5, 4.3], k), target: mix3([0.2, 0.52 + y * 0.6, 0], [-0.1, 0.48 + y * 0.6, 0], k), fov: 36, roll: -0.06 };
-    S.streaks = (1 - 0.75 * Math.sin(Math.PI * seg(t, IMPACT - 0.15, IMPACT + 0.7))) * smooth(seg(t, 20, 20.25)) * (1 - smooth(seg(t, 22.6, 23)));
-    const rf = seg(t, IMPACT, IMPACT + 1.1);
-    S.ring = { amt: (1 - rf) * (rf > 0 ? 1 : 0), r: 0.2 + rf * 4.2 };
+    // удар пятки: всплеск и волна по луже (время всплеска — секунды «настоящего» действия)
+    const sg = t - IMPACT;
+    S.splash = sg >= 0 ? sg : -1;
+    S.ring = { amt: sg >= 0 ? Math.exp(-sg * 1.4) : 0, r: 0.12 + Math.max(0, sg) * 2.4, c: [-1.25, 0.02] };
     S.light.rimR = 20; S.light.envRot = lerp(0, 0.8, k);
-    S.bg = { glowAmt: 0.32, glow2Amt: 0.08, glowDir: [0, 0.2, -1], bars: 1, base: 1 };
     S.bloom = 0.5; S.spot = 0.1;
   },
   // ---- 10. Анфас: наезд на носок, контровые вспыхивают по ударам
@@ -210,8 +257,9 @@ const SHOT_FN = {
     const k = easeOut(seg(t, 27, 31.5));
     S.shoe.yaw = lerp(-0.12, -0.24, k);
     S.cam = { pos: mix3([4.3, 1.2, 4.6], [3.8, 1.08, 4.1], k), target: mix3([-0.65, 0.48, 0.1], [-0.82, 0.46, 0.15], k), fov: 27, roll: 0 };
-    const sw = seg(t, 28.2, 30.2);
-    S.light = { key: 5.5, rimL: 14, rimR: 16, sweep: 24 * Math.sin(Math.PI * sw), sweepPos: [lerp(-2.6, 2.6, sw), 1.6, 2.4], sweepLook: [0, 0.5, 0], sun: 0.9, env: 0.5, envRot: lerp(-0.2, 0.25, k) };
+    S.light = { key: 5.5, rimL: 14, rimR: 16, sweep: 0, sun: 0.9, env: 0.5, envRot: lerp(-0.2, 0.25, k) };
+    // по кроссовку снова проходят фары — машина едет в другую сторону
+    S.street.car = { on: 1, p: seg(t, 27.9, 30.7), dir: -1, head: 1, tail: 1 };
     S.bg = { glowAmt: 0.48, glow2Amt: 0.06, glowDir: [0.45, 0.25, -1], bars: 0, base: 1 };
     S.bloom = 0.5; S.spot = 0.14;
     S.fade = smooth(seg(t, 31.35, 32));

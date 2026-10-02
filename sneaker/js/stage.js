@@ -1,6 +1,5 @@
-// stage.js — студия: свет, пол-зеркало с мягкой тенью, фон, эффекты, постобработка.
+// stage.js — сцена: ночная улица (street.js), свет, контактная тень, постобработка.
 import * as THREE from 'three';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -10,10 +9,9 @@ import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
-import { Reflector } from 'three/addons/objects/Reflector.js';
 import { HorizontalBlurShader } from 'three/addons/shaders/HorizontalBlurShader.js';
 import { VerticalBlurShader } from 'three/addons/shaders/VerticalBlurShader.js';
-import { smudge } from './textures.js';
+import { createStreet, BG_YAW } from './street.js';
 
 const SHOE_LAYER = 1;
 
@@ -45,7 +43,7 @@ const FinalShader = {
     }`,
 };
 
-export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 1 } = {}) {
+export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 1, asphalt } = {}) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
   renderer.setPixelRatio(pixelRatio);
   renderer.setSize(width, height, false);
@@ -57,30 +55,16 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
   RectAreaLightUniformsLib.init();
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(28, width / height, 0.05, 150);
+  const camera = new THREE.PerspectiveCamera(28, width / height, 0.05, 420);
   camera.layers.enable(SHOE_LAYER);
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = studioEnv(pmrem);
   scene.environmentIntensity = 0.3;
-  void RoomEnvironment;
 
-  // ---- фон: тёмная циклорама со свечением
-  const bgMat = new THREE.ShaderMaterial({
-    side: THREE.BackSide, depthWrite: false,
-    uniforms: { base: { value: new THREE.Color('#0b0c10') }, glow: { value: new THREE.Color('#ff5a1f') }, glowDir: { value: new THREE.Vector3(0.3, 0.15, -1).normalize() }, glowAmt: { value: 0.5 }, glowPow: { value: 3.2 }, glow2: { value: new THREE.Color('#2a6dff') }, glow2Dir: { value: new THREE.Vector3(-1, 0.4, -0.4).normalize() }, glow2Amt: { value: 0.15 } },
-    vertexShader: 'varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-    fragmentShader: `
-      uniform vec3 base, glow, glow2, glowDir, glow2Dir; uniform float glowAmt, glowPow, glow2Amt; varying vec3 vDir;
-      void main(){
-        vec3 d = normalize(vDir);
-        float g = pow(max(dot(d, glowDir), 0.0), glowPow), g2 = pow(max(dot(d, glow2Dir), 0.0), 5.0);
-        float above = smoothstep(-0.03, 0.22, d.y);
-        vec3 col = base * (0.55 + 0.45 * smoothstep(-0.2, 0.5, d.y)) + (glow * g * glowAmt + glow2 * g2 * glow2Amt) * above;
-        gl_FragColor = vec4(col, 1.0);
-      }`,
-  });
-  const bg = new THREE.Mesh(new THREE.SphereGeometry(60, 48, 24), bgMat);
-  scene.add(bg);
+  // ---- ночной воздух: дальний асфальт тонет в дымке
+  scene.fog = new THREE.FogExp2('#0e1019', 0.02);
+  scene.backgroundBlurriness = 0.09;
+  scene.backgroundRotation.set(0, BG_YAW, 0);
 
   // ---- контактная тень: глубина снизу, размытая (как в примере three.js)
   const SH = { size: 7, height: 1.6 };
@@ -118,58 +102,10 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
     scene.background = bgVis;
   }
 
-  // ---- пол: чёрный глянец с отражением (Reflector рисует отражение, шейдер — свой)
-  const reflector = new Reflector(new THREE.PlaneGeometry(40, 40), { textureWidth: Math.round(width * pixelRatio * 0.5), textureHeight: Math.round(height * pixelRatio * 0.5), clipBias: 0.002 });
-  const texMatrix = reflector.material.uniforms.textureMatrix.value;
-  const floorMat = new THREE.ShaderMaterial({
-    uniforms: {
-      tDiffuse: { value: reflector.getRenderTarget().texture }, textureMatrix: { value: texMatrix }, tShadow: { value: rtShadow.texture }, tSmudge: { value: smudge() },
-      shadowSize: { value: SH.size }, shadowOpacity: { value: 0.95 }, floorColor: { value: new THREE.Color('#0a0b0e') }, horizon: { value: new THREE.Color('#0b0c10').multiplyScalar(0.62) },
-      spotColor: { value: new THREE.Color('#ffffff') }, spot: { value: 0.05 }, reflect: { value: 0.55 }, blur: { value: 0.0016 },
-      ring: { value: 0 }, ringR: { value: 0 }, ringColor: { value: new THREE.Color('#ff6a2a') },
-    },
-    vertexShader: `
-      uniform mat4 textureMatrix; varying vec4 vUv; varying vec3 vWorld;
-      void main(){ vUv = textureMatrix * vec4(position, 1.0); vec4 w = modelMatrix * vec4(position, 1.0); vWorld = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
-    fragmentShader: `
-      uniform sampler2D tDiffuse, tShadow, tSmudge; uniform vec3 floorColor, horizon, spotColor, ringColor;
-      uniform float shadowSize, shadowOpacity, spot, reflect, blur, ring, ringR;
-      varying vec4 vUv; varying vec3 vWorld;
-      void main(){
-        // настоящий глянцевый пол не идеальное зеркало: разводы от протирки,
-        // микроцарапины и пыль делают отражение местами мутнее
-        float s1 = texture2D(tSmudge, vWorld.xz * 0.16).g, s2 = texture2D(tSmudge, vWorld.xz * 0.61 + 0.37).g;
-        float rough = s1 * 0.65 + s2 * 0.35;
-        vec2 uv = vUv.xy / vUv.w + (vec2(s1, s2) - 0.5) * 0.0025;
-        float bl = blur * (0.4 + 1.6 * rough);
-        vec3 refl = vec3(0.0);
-        for (int i = -2; i <= 2; i++) for (int j = -2; j <= 2; j++) refl += texture2D(tDiffuse, uv + vec2(float(i), float(j)) * bl).rgb;
-        refl /= 25.0;
-        refl *= 1.25 - 0.55 * rough;
-        float d = length(vWorld.xz);
-        vec3 V = normalize(cameraPosition - vWorld);
-        float fres = 0.06 + 0.94 * pow(1.0 - max(V.y, 0.0), 5.0);
-        float fade = 1.0 - smoothstep(2.0, 11.0, d);
-        vec3 col = floorColor + spotColor * spot * exp(-d * d / 4.0);
-        col += refl * reflect * mix(0.35, 1.0, fres) * fade;
-        vec2 suv = vWorld.xz / shadowSize + 0.5;
-        float sa = 0.0;
-        if (suv.x > 0.0 && suv.x < 1.0 && suv.y > 0.0 && suv.y < 1.0) sa = texture2D(tShadow, suv).a;
-        col *= 1.0 - clamp(sa, 0.0, 1.0) * shadowOpacity;
-        float dust = smoothstep(0.72, 0.95, s2);
-        col += spotColor * dust * (0.006 + spot * 0.22 * exp(-d * d / 4.0)) * (1.0 - smoothstep(3.0, 9.0, d));
-        // кольцо-волна от приземления
-        float rr = abs(d - ringR);
-        col += ringColor * ring * (exp(-rr * rr / 0.004) * 1.5 + exp(-rr * rr / 0.05) * 0.4);
-        col = mix(col, horizon, smoothstep(5.0, 16.0, d));
-        gl_FragColor = vec4(col, 1.0);
-      }`,
-  });
-  reflector.material = floorMat;
-  reflector.rotation.x = -Math.PI / 2;
-  scene.add(reflector);
-  // в отражении не нужны вспомогательные плоскости
-  const hideInReflection = [];
+  // ---- улица: мокрый асфальт с лужами, дождь, огни, машина, туман
+  const street = createStreet({ scene, width, height, pixelRatio, shadow: { texture: rtShadow.texture, size: SH.size }, asphalt });
+  // в отражении не нужны мелкие брызги и туман у самой земли
+  const reflector = street.reflector, hideInReflection = street.hideInReflection;
   const origBefore = reflector.onBeforeRender;
   reflector.onBeforeRender = function (r, s, c) {
     const st = hideInReflection.map((o) => o.visible);
@@ -177,6 +113,11 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
     origBefore.call(this, r, s, c);
     hideInReflection.forEach((o, i) => (o.visible = st[i]));
   };
+  // дождь, брызги, туман и спрайты — не твёрдые тела: их не должно быть в буферах глубины
+  for (const o of [street.rain, street.splashes, street.mist, street.city, street.car]) o.traverse((x) => { x.userData.soft = true; });
+  const soft = [];
+  const hideSoft = () => { soft.length = 0; scene.traverse((o) => { if (o.userData.soft && o.visible) { soft.push(o); o.visible = false; } }); };
+  const showSoft = () => { soft.forEach((o) => (o.visible = true)); };
 
   // ---- свет
   const key = new THREE.RectAreaLight('#fff4ea', 5, 3.2, 1.6);
@@ -194,46 +135,6 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
   sun.shadow.camera.layers.set(SHOE_LAYER);
   scene.add(key, rimL, rimR, sweep, sun, sun.target);
 
-  // светящиеся полосы позади (дают блики в полу и в глянце)
-  const barMat = new THREE.MeshBasicMaterial({ color: new THREE.Color('#ff6a2a').multiplyScalar(4) });
-  const barMat2 = new THREE.MeshBasicMaterial({ color: new THREE.Color('#3d8bff').multiplyScalar(3) });
-  const bars = [new THREE.Mesh(new THREE.PlaneGeometry(0.06, 6), barMat), new THREE.Mesh(new THREE.PlaneGeometry(0.06, 6), barMat2)];
-  bars[0].position.set(5.6, 3, -8.5); bars[1].position.set(-5.8, 3, -8.8);
-  bars.forEach((b) => scene.add(b));
-  // полоса света, которая пробегает в начале ролика
-  const sweepBar = new THREE.Mesh(new THREE.PlaneGeometry(0.03, 3.2), new THREE.MeshBasicMaterial({ color: new THREE.Color('#ffffff').multiplyScalar(6), transparent: true }));
-  scene.add(sweepBar);
-  hideInReflection.push(sweepBar);
-
-  // ---- огромная надпись на фоне
-  const bigText = makeBigText();
-  bigText.position.set(0, 1.25, -3.6);
-  scene.add(bigText);
-
-  // ---- скоростные штрихи (план «бег»)
-  const N = 220, streakGeo = new THREE.PlaneGeometry(1, 0.008);
-  const streakMat = new THREE.MeshBasicMaterial({ color: new THREE.Color('#ffd2b8').multiplyScalar(1.6), transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
-  const streaks = new THREE.InstancedMesh(streakGeo, streakMat, N);
-  const srng = mulberry(77), seeds = [];
-  for (let i = 0; i < N; i++) { const low = srng() < 0.25; seeds.push([srng() * 20 - 10, low ? 0.01 + srng() * 0.05 : 0.15 + srng() * 2.4, low ? -1.5 + srng() * 3.5 : -7 + srng() * 5.6, 0.4 + srng() * 1.4, srng()]); }
-  scene.add(streaks);
-  hideInReflection.push(streaks);
-  const dummy = new THREE.Object3D();
-  function setStreaks(t, amt) {
-    streakMat.opacity = amt * 0.55;
-    streaks.visible = amt > 0.01;
-    if (!streaks.visible) return;
-    seeds.forEach((s, i) => {
-      const x = ((s[0] - t * 14 * (0.6 + s[4]) + 1000) % 20) - 10;
-      dummy.position.set(x, s[1], s[2]);
-      dummy.scale.set(s[3] * (0.5 + amt), 1 + s[4] * 2, 1);
-      dummy.rotation.set(0, 0, 0);
-      dummy.updateMatrix();
-      streaks.setMatrixAt(i, dummy.matrix);
-    });
-    streaks.instanceMatrix.needsUpdate = true;
-  }
-
   // ---- постобработка
   const Q = new URLSearchParams(location.search);
   const rt = new THREE.WebGLRenderTarget(width * pixelRatio, height * pixelRatio, { type: THREE.HalfFloatType, samples: Q.has('samples') ? Number(Q.get('samples')) : 4 });
@@ -248,8 +149,12 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
   gtao.updateGtaoMaterial({ radius: 0.16, distanceExponent: 1.6, thickness: 1.0, scale: 1.1, samples: 12, distanceFallOff: 1 });
   gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 5, rings: 2, samples: 10 });
   gtao.enabled = !Q.has('noao');
+  const ovGtao = gtao.overrideVisibility.bind(gtao);
+  gtao.overrideVisibility = function () { ovGtao(); scene.traverse((o) => { if (o.userData.soft) o.visible = false; }); };
   const bokeh = new BokehPass(scene, camera, { focus: 3, aperture: 0.002, maxblur: 0.006 });
   bokeh.enabled = false;
+  const bokehRender = bokeh.render.bind(bokeh);
+  bokeh.render = function (...a) { hideSoft(); bokehRender(...a); showSoft(); };
   const bloom = new UnrealBloomPass(new THREE.Vector2(width, height), 0.5, 0.6, 0.92);
   // широкие слои свечения теплее — как ореол (халация) вокруг бликов на плёнке
   [[1, 1, 1], [1, 0.96, 0.92], [1, 0.88, 0.78], [1, 0.8, 0.66], [1, 0.74, 0.58]].forEach((c, i) => bloom.bloomTintColors[i].set(...c));
@@ -275,14 +180,16 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
     camera.aspect = w / h; camera.updateProjectionMatrix();
     composer.setPixelRatio(pr);
     composer.setSize(w, h);
-    reflector.getRenderTarget().setSize(Math.round(w * pr * 0.5), Math.round(h * pr * 0.5));
+    street.setSize(w, h, pr);
     for (const t of [accA, accB, ldr]) t.setSize(Math.round(w * pr), Math.round(h * pr));
     bloom.setSize(Math.round(w * pr), Math.round(h * pr));
     final.uniforms.aspect.value = w / h;
   }
 
+  // панорама ночного города: она и фон (размытый, как на длинном объективе), и окружение для отражений
   function setEnvironment(tex) {
-    scene.environment = pmrem.fromEquirectangular(tex).texture;
+    const env = pmrem.fromEquirectangular(tex).texture;
+    scene.environment = env; scene.background = env;
     tex.dispose();
   }
 
@@ -313,8 +220,8 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
   }
 
   return {
-    renderer, scene, camera, composer, adopt, render, setSize, setStreaks, setEnvironment,
-    lights: { key, rimL, rimR, sweep, sun }, gtao, bars, barMats: [barMat, barMat2], sweepBar, bigText, bg: bgMat, floor: floorMat, bloom, bokeh, final, shadowCam,
+    renderer, scene, camera, composer, adopt, render, setSize, setEnvironment, street,
+    lights: { key, rimL, rimR, sweep, sun }, gtao, bloom, bokeh, final, shadowCam,
   };
 }
 
@@ -336,23 +243,3 @@ function studioEnv(pmrem) {
   return pmrem.fromScene(env, 0.0).texture;
 }
 
-function mulberry(seed) { let t = seed >>> 0; return () => { t += 0x6d2b79f5; let r = Math.imul(t ^ (t >>> 15), t | 1); r ^= r + Math.imul(r ^ (r >>> 7), r | 61); return ((r ^ (r >>> 14)) >>> 0) / 4294967296; }; }
-
-// огромная контурная надпись «PULSE ONE» за кроссовком
-function makeBigText() {
-  const c = document.createElement('canvas'); c.width = 2048; c.height = 512;
-  const ctx = c.getContext('2d');
-  ctx.font = '800 300px "Unbounded", "Manrope", Arial, sans-serif';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.lineWidth = 5; ctx.strokeStyle = '#fff';
-  ctx.strokeText('PULSE ONE', 1024, 270);
-  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(9, 2.25), new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0, depthWrite: false, color: new THREE.Color('#ffffff') }));
-  m.userData.redraw = () => {
-    ctx.clearRect(0, 0, c.width, c.height);
-    ctx.font = '800 300px "Unbounded", "Manrope", Arial, sans-serif';
-    ctx.strokeText('PULSE ONE', 1024, 270);
-    tex.needsUpdate = true;
-  };
-  return m;
-}

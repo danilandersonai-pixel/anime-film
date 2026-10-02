@@ -5,7 +5,7 @@ const { openPage } = require('./serve.cjs');
 (async () => {
   const out = path.resolve(process.argv[2] || 'out/frames'); fs.mkdirSync(out, { recursive: true });
   const times = (process.argv[3] || '1,3,5,7,9,10.5,12.5,13.2,14,15.3,16.3,19.6').split(',').map(Number);
-  const { browser, page, srv, errors } = await openPage('index.html', { width: 1920, height: 1080, query: '?capture' });
+  const { browser, page, srv, errors } = await openPage('index.html', { width: 1920, height: 1080, query: '?capture' + (process.env.Q || '') });
   await page.waitForFunction(() => window.__ad && window.__ad.ready === true, null, { timeout: 120000 });
   const stage = await page.$('#stage');
   const files = [];

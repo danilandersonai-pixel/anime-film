@@ -144,10 +144,82 @@ function build(ctx) {
     c.start(t); mo.start(t); c.stop(t + dur + 0.1); mo.stop(t + dur + 0.1);
   }
 
+  // ---- звуки улицы
+  // дождь: шелест в двух полосах, низкий гул и сотни отдельных капель по стереобазе
+  function rainBed(t0, t1, v) {
+    for (const [type, fr, q, gain, pan] of [['bandpass', 5200, 0.7, 1, -0.4], ['bandpass', 3400, 0.6, 0.9, 0.4], ['lowpass', 420, 0.5, 0.8, 0]]) {
+      const s = noiseSrc(t0, t1 - t0), f = ctx.createBiquadFilter(), g = ctx.createGain(), p = ctx.createStereoPanner();
+      f.type = type; f.frequency.value = fr; f.Q.value = q; p.pan.value = pan;
+      g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(v * gain, t0 + 1.0); g.gain.setValueAtTime(v * gain, t1 - 0.8); g.gain.exponentialRampToValueAtTime(0.0001, t1);
+      s.connect(f).connect(g).connect(p).connect(out);
+    }
+    const n = Math.floor((t1 - t0) * 26);
+    for (let i = 0; i < n; i++) {
+      const t = t0 + 0.3 + r() * (t1 - t0 - 0.6);
+      const o = ctx.createOscillator(), g = ctx.createGain(), p = ctx.createStereoPanner();
+      o.frequency.setValueAtTime(1600 + r() * 3400, t); o.frequency.exponentialRampToValueAtTime(2400 + r() * 3000, t + 0.03);
+      p.pan.value = r() * 1.6 - 0.8;
+      env(g, t, 0.001, v * (0.12 + 0.6 * r() * r()), 0.018 + r() * 0.03);
+      o.connect(g).connect(p).connect(out); o.start(t); o.stop(t + 0.07);
+    }
+  }
+  // гром: сухой треск и затем несколько низких раскатов
+  function thunder(t, v = 1) {
+    { const s = noiseSrc(t, 0.7), f = ctx.createBiquadFilter(), g = ctx.createGain(); f.type = 'highpass'; f.frequency.value = 900; env(g, t, 0.002, 0.45 * v, 0.6); s.connect(f).connect(g).connect(out); send(g, 0.9); }
+    const t1 = t + 0.32, s = noiseSrc(t1, 4.6), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    f.type = 'lowpass'; f.frequency.setValueAtTime(420, t1); f.frequency.exponentialRampToValueAtTime(80, t1 + 4.4);
+    g.gain.setValueAtTime(0.0001, t1);
+    let tk = t1;
+    for (let k = 0; k < 6; k++) { tk += 0.32 + r() * 0.25; g.gain.exponentialRampToValueAtTime(v * (0.95 - k * 0.13), tk); g.gain.exponentialRampToValueAtTime(v * 0.22 * (1 - k * 0.12), tk + 0.28); tk += 0.28; }
+    g.gain.exponentialRampToValueAtTime(0.0001, t1 + 4.5);
+    s.connect(f).connect(g).connect(out); send(g, 0.9);
+  }
+  // машина: шипение шин по мокрому асфальту и мотор с эффектом Доплера, слева направо (dir = 1) или наоборот
+  function carPass(t0, dur, dir, v = 0.35) {
+    const tm = t0 + dur * 0.5;
+    const s = noiseSrc(t0, dur), f = ctx.createBiquadFilter(), g = ctx.createGain(), p = ctx.createStereoPanner();
+    f.type = 'bandpass'; f.Q.value = 0.8; f.frequency.setValueAtTime(1500, t0); f.frequency.linearRampToValueAtTime(2700, tm); f.frequency.linearRampToValueAtTime(1100, t0 + dur);
+    g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(v, tm); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    p.pan.setValueAtTime(-0.9 * dir, t0); p.pan.linearRampToValueAtTime(0.9 * dir, t0 + dur);
+    s.connect(f).connect(g).connect(p).connect(out); send(g, 0.4);
+    const o = ctx.createOscillator(), lf = ctx.createBiquadFilter(), og = ctx.createGain(), op = ctx.createStereoPanner();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(96, t0); o.frequency.linearRampToValueAtTime(92, tm - 0.12); o.frequency.linearRampToValueAtTime(72, tm + 0.15); o.frequency.linearRampToValueAtTime(68, t0 + dur);
+    lf.type = 'lowpass'; lf.frequency.value = 300;
+    og.gain.setValueAtTime(0.0001, t0); og.gain.exponentialRampToValueAtTime(v * 0.4, tm); og.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    op.pan.setValueAtTime(-0.9 * dir, t0); op.pan.linearRampToValueAtTime(0.9 * dir, t0 + dur);
+    o.connect(lf).connect(og).connect(op).connect(out); o.start(t0); o.stop(t0 + dur + 0.05);
+  }
+  // шлепок по луже: плотный удар, шипящий хвост и капли, падающие обратно
+  function splashSnd(t, v = 0.7) {
+    const s = noiseSrc(t, 0.6), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    f.type = 'bandpass'; f.Q.value = 0.9; f.frequency.setValueAtTime(700, t); f.frequency.exponentialRampToValueAtTime(3000, t + 0.3);
+    env(g, t, 0.003, v, 0.55); s.connect(f).connect(g).connect(out); send(g, 0.6);
+    for (let i = 0; i < 30; i++) {
+      const tt = t + 0.4 + Math.pow(r(), 1.3) * 2.0, o = ctx.createOscillator(), og = ctx.createGain(), p = ctx.createStereoPanner();
+      o.frequency.setValueAtTime(800 + r() * 1700, tt); o.frequency.exponentialRampToValueAtTime(1300 + r() * 2800, tt + 0.04);
+      p.pan.value = r() * 1.4 - 0.7;
+      env(og, tt, 0.001, v * 0.2 * (0.3 + r()), 0.05);
+      o.connect(og).connect(p).connect(out); o.start(tt); o.stop(tt + 0.08);
+    }
+  }
+
+  // ---- улица: дождь весь ролик (громче во вступлении, пока нет бита), гром к молнии, две машины
+  rainBed(0, LENGTH, 0.05);
+  rainBed(0, 4.6, 0.07);
+  thunder(0.55, 0.9);
+  carPass(1.25, 2.6, 1, 0.32);
+  carPass(27.9, 2.8, -1, 0.22);
+  // рапид на всплеске: звук «проваливается» вниз, перед разгоном — свист вверх
+  splashSnd(IMPACT, 0.8);
+  whoosh(IMPACT + 0.02, 0.85, 1800, 160, 0, 0, 0.3);
+  whoosh(IMPACT + 0.72, 0.28, 300, 5000, -0.2, 0.3, 0.3);
+  // хлёсткие панорамы на склейках
+  for (const [T, d] of [[12, 1], [20, -1], [25, 1]]) whoosh(T - 0.15, 0.34, 500, 6000, -0.8 * d, 0.8 * d, 0.36);
+
   // ---- 0–4: тьма, сердцебиение, полоса света облетает кроссовок
   pad(0.2, 4.0, [52, 59], 0.035, 2.5);
   for (const b of [0.6, 1.6, 2.6]) { kick(b, 0.45); kick(b + 0.24, 0.3); }
-  whoosh(0.3, 3.6, 500, 5000, -0.85, 0.85, 0.3);
   bell(2.55, 76, 0.07, 2.5);
   riser(2.0, 2.0, 0.25);
   // ---- 4–10: макропланы — ритм вполсилы, без хлопков
@@ -205,7 +277,6 @@ function build(ctx) {
   pad(27, 5.4, [40, 52, 55, 59, 66], 0.05, 0.05);
   bass(27, 28, 2.5, 0.35);
   bell(27.35, 88, 0.16, 3.5); bell(27.6, 95, 0.1, 3.5);
-  whoosh(28.2, 2.0, 600, 2400, -0.6, 0.6, 0.18);
   blip(29.4, N(88), 0.07);
 }
 

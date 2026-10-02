@@ -260,6 +260,23 @@ function ribbon(points, width, thick, upHint = [0, 1, 0], { tubular = 120, radia
 }
 
 // ---------------------------------------------------------------------
+// Положение кроссовка по состоянию кадра: поворот (крен, курс, наклон) и опора —
+// пятка или носок. Без сцены: этим же считаются капли с подошвы и всплеск.
+// ---------------------------------------------------------------------
+export const BASE_Y = 0.024; // подмётка стоит на асфальте
+export function shoeTransform(sh, pos = new THREE.Vector3(), quat = new THREE.Quaternion()) {
+  quat.setFromEuler(new THREE.Euler(sh.roll, sh.yaw, sh.pitch, 'YZX'));
+  pos.set(sh.pos[0], sh.pos[1] + BASE_Y, sh.pos[2]);
+  if (sh.pivot) {
+    const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), sh.yaw);
+    const local = new THREE.Vector3(sh.pivot[0], sh.pivot[1], 0);
+    const world = local.clone().applyQuaternion(qy).add(pos);
+    pos.copy(world.sub(local.applyQuaternion(quat)));
+  }
+  return { pos, quat };
+}
+
+// ---------------------------------------------------------------------
 // Расцветки
 // ---------------------------------------------------------------------
 export const COLORWAYS = {
@@ -478,6 +495,62 @@ export function buildShoe({ jersey = null } = {}) {
   // ---- вентиляционная перфорация на носке (проекция сверху)
   add('upper', patch(60, 40, (a) => lerp(0.4, 0.6, a), (a, b) => lerp(0.2, 0.82, b), 0.0025, (q) => [(q[0] - 0.62) / 0.9, (q[2] + 0.48) / 0.96]), M.holes, 'perforation').castShadow = false;
 
+  // ---- капли воды: полусферы-линзы; на верхних гранях их больше — туда падает дождь
+  const wr = TX.rng(2024), dm = new THREE.Object3D(), Yup = new THREE.Vector3(0, 1, 0);
+  // без честного преломления (оно требует лишней перерисовки сцены): капля — прозрачный глянец с бликом
+  // капля на тёмной ткани видна только бликом: материал прибавляется к картинке, ничего не закрывая
+  M.drop = new THREE.MeshPhysicalMaterial({ color: '#05070a', metalness: 0, roughness: 0.03, transparent: true, blending: THREE.AdditiveBlending, clearcoat: 1, clearcoatRoughness: 0.02, envMapIntensity: 1.6, specularIntensity: 1, depthWrite: false });
+  const dropGeo = new THREE.SphereGeometry(1, 16, 8, 0, TAU, 0, Math.PI / 2);
+  const place = (mesh, i, p, n, r, h) => {
+    dm.position.set(p[0] + n[0] * 0.003, p[1] + n[1] * 0.003, p[2] + n[2] * 0.003);
+    dm.quaternion.setFromUnitVectors(Yup, new THREE.Vector3(...n).normalize());
+    dm.rotateY(wr() * TAU);
+    dm.scale.set(r * (1 + 0.25 * wr()), r * h, r);
+    dm.updateMatrix(); mesh.setMatrixAt(i, dm.matrix);
+  };
+  const dropR = () => 0.004 + 0.02 * Math.pow(wr(), 3.2);
+  const ND = 1100, drops = new THREE.InstancedMesh(dropGeo, M.drop, ND);
+  for (let i = 0; i < ND; i++) {
+    let sS, tT, n;
+    do { sS = wr(); tT = 0.12 + 0.85 * wr(); n = upperNormal(sS, tT); } while (wr() > Math.max(0, n[1]) + 0.12);
+    place(drops, i, upperPoint(sS, tT), n, dropR(), 0.45 + 0.3 * wr());
+  }
+  drops.name = 'drops'; drops.castShadow = false;
+  groups.upper.add(drops);
+  // на боковине пены капли висят у верхнего края
+  const NF = 170, fdrops = new THREE.InstancedMesh(dropGeo, M.drop, NF);
+  for (let i = 0; i < NF; i++) {
+    const u = 0.04 + 0.92 * wr(), L = last(u, 0.035), side = wr() < 0.5 ? 1 : -1;
+    const y = top(u) - 0.015 - 0.16 * Math.pow(wr(), 1.5);
+    place(fdrops, i, [L.x, y, (side > 0 ? L.lat + 0.006 : L.med - 0.006)], [0, 0.15, side], dropR() * 0.9, 0.5 + 0.2 * wr());
+  }
+  fdrops.name = 'foamDrops';
+  groups.foamTop.add(fdrops);
+
+  // ---- ворсинки: тысячи коротких изогнутых волокон над трикотажем (видны на макро)
+  const fiberGeo = (() => {
+    const pos = [], idx = [];
+    for (let k = 0; k <= 4; k++) { const t = k / 4; pos.push(-0.5, t, 0.35 * t * t, 0.5, t, 0.35 * t * t); }
+    for (let k = 0; k < 4; k++) { const a = k * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
+    return g;
+  })();
+  M.fiber = new THREE.MeshStandardMaterial({ color: '#7d828c', roughness: 0.6, side: THREE.DoubleSide });
+  const NFB = 9000, fibers = new THREE.InstancedMesh(fiberGeo, M.fiber, NFB);
+  for (let i = 0; i < NFB; i++) {
+    const sS = wr(), tT = 0.06 + 0.9 * wr(), p = upperPoint(sS, tT), n = new THREE.Vector3(...upperNormal(sS, tT)).normalize();
+    const L = 0.008 + 0.022 * wr();
+    dm.position.set(p[0], p[1], p[2]);
+    // волокно торчит под углом к поверхности, в случайную сторону
+    const tilt = new THREE.Vector3(wr() - 0.5, wr() - 0.5, wr() - 0.5).projectOnPlane(n).normalize();
+    const dir = n.clone().multiplyScalar(0.35 + 0.5 * wr()).add(tilt).normalize();
+    dm.quaternion.setFromUnitVectors(Yup, dir); dm.rotateY(wr() * TAU);
+    dm.scale.set(0.00045, L, L);
+    dm.updateMatrix(); fibers.setMatrixAt(i, dm.matrix);
+  }
+  fibers.name = 'fibers'; fibers.castShadow = false;
+  groups.upper.add(fibers);
+
   // ---- якоря для подписей (локальные координаты)
   const anchors = {
     upper: upperPoint(0.3, 0.55),
@@ -515,7 +588,7 @@ export function buildShoe({ jersey = null } = {}) {
       const x = P.getX(k), y = P.getY(k), z = P.getZ(k);
       // пряжа никогда не окрашена идеально ровно: мягкие пятна в пару сантиметров
       const n = 0.5 * Math.sin(x * 7.1 + z * 3.3) + 0.3 * Math.sin(y * 11.7 - x * 4.9) + 0.2 * Math.sin(z * 17.3 + y * 5.1);
-      const c = A.clone().lerp(B, w[k]).multiplyScalar(1 + 0.05 * n);
+      const c = A.clone().lerp(B, w[k]).multiplyScalar((1 + 0.05 * n) * 0.88); // мокрая пряжа темнее
       col.setXYZ(k, c.r, c.g, c.b);
     }
     col.needsUpdate = true;
@@ -530,6 +603,7 @@ export function buildShoe({ jersey = null } = {}) {
     M.stitch.color.set(cw.stitch); M.holes.color.set(cw.hole); M.aglet.color.set(cw.aglet);
     M.logo.color.set(cw.logo);
     M.laces.color.set(cw.laces).multiplyScalar(0.8);
+    M.fiber.color.set(cw.upperB).lerp(new THREE.Color(cw.upperA), 0.4).multiplyScalar(1.25);
     M.tab.color.set(cw.tab);
     M.tabText.color.set(name === 'volt' ? '#c9f03c' : '#ffffff');
     root.userData.colorway = name;
