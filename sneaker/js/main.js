@@ -3,13 +3,13 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { buildShoe, COLORWAYS } from './shoe.js';
 import { createStage } from './stage.js';
-import { evaluate, DURATION, GLOWS } from './timeline.js';
+import { evaluate, DURATION, GLOWS, setRig } from './timeline.js';
 import { createOverlay, CALLOUTS } from './overlay.js';
 import { renderTrack, toWav } from './audio.js';
 
 const CAPTURE = new URLSearchParams(location.search).has('capture');
-const COVER_T = 19.6;   // обложка до нажатия: готовый пэкшот
-const EXPLORE_T = 19.6; // свет и фон для свободного осмотра
+const COVER_T = 30.2;   // обложка до нажатия: готовый пэкшот
+const EXPLORE_T = 30.2; // свет и фон для свободного осмотра
 const $ = (id) => document.getElementById(id);
 if (CAPTURE) document.body.classList.add('capture');
 
@@ -22,6 +22,7 @@ const W0 = 1920, H0 = 1080;
 const stage = createStage(canvas, { width: W0, height: H0, pixelRatio: 1 });
 const shoe = buildShoe();
 stage.adopt(shoe.root);
+setRig(shoe.macro);
 stage.bigText.userData.redraw();
 const overlay = createOverlay($('ov'));
 const cam = stage.camera;
@@ -72,9 +73,9 @@ function apply(S, cwOverride) {
   L.rimL.intensity = S.light.rimL; L.rimL.color.copy(c2).lerp(new THREE.Color('#ffffff'), 0.25);
   L.rimR.intensity = S.light.rimR; L.rimR.color.copy(c1).lerp(new THREE.Color('#ffffff'), 0.15);
   L.sweep.intensity = S.light.sweep;
-  L.sweep.position.set(S.light.sweepX, 1.5, 2.4); L.sweep.lookAt(S.light.sweepX * 0.6, 0.5, 0);
-  stage.sweepBar.position.set(S.light.sweepX, 1.2, -2.2);
-  stage.sweepBar.material.opacity = Math.min(1, S.light.sweep / 20);
+  L.sweep.position.set(...(S.light.sweepPos || [0, 1.5, 2.4])); L.sweep.lookAt(...(S.light.sweepLook || [0, 0.5, 0]));
+  stage.sweepBar.visible = false;
+  stage.scene.environmentRotation.set(0, S.light.envRot || 0, 0);
   L.sun.intensity = S.light.sun;
   stage.scene.environmentIntensity = S.light.env;
 
@@ -82,7 +83,9 @@ function apply(S, cwOverride) {
   stage.bg.uniforms.glow.value.copy(c1); stage.bg.uniforms.glow2.value.copy(c2);
   stage.bg.uniforms.glowAmt.value = S.bg.glowAmt; stage.bg.uniforms.glow2Amt.value = S.bg.glow2Amt;
   stage.bg.uniforms.glowDir.value.set(...S.bg.glowDir).normalize();
+  stage.bg.uniforms.base.value.set('#0b0c10').multiplyScalar(S.bg.base === undefined ? 1 : S.bg.base);
   stage.barMats[0].color.copy(c1).multiplyScalar(4 * S.bg.bars); stage.barMats[1].color.copy(c2).multiplyScalar(3 * S.bg.bars);
+  stage.bars.forEach((b) => { b.visible = S.bg.bars > 0.01; });
   stage.bigText.material.opacity = S.bigText.opacity;
   stage.bigText.position.x = S.bigText.x;
   stage.bigText.material.color.copy(c1).lerp(new THREE.Color('#ffffff'), 0.5);
@@ -206,7 +209,7 @@ function initPlayer() {
   function stopAudio() { if (src) { try { src.stop(); } catch (e) { /* уже остановлен */ } src = null; } }
 
   async function play(from = t) {
-    if (from >= DURATION - 0.05) from = 0;
+    if (mode === 'cover' || from >= DURATION - 0.05) from = 0;
     leaveExplore();
     mode = 'playing'; t = from;
     bigPlay.hidden = true;
@@ -227,7 +230,7 @@ function initPlayer() {
       if (mode !== 'playing') return;
       t = Math.min(DURATION, now());
       draw();
-      if (t >= DURATION) { pause(); t = DURATION; bigPlay.hidden = false; bigPlay.querySelector('span').textContent = 'Посмотреть ещё раз'; return; }
+      if (t >= DURATION) { pause(); mode = 'cover'; t = COVER_T; draw(); bigPlay.hidden = false; bigPlay.querySelector('span').textContent = 'Посмотреть ещё раз'; return; }
       loop();
     });
   }

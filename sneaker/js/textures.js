@@ -74,6 +74,7 @@ export function knit() {
   const W = 512, H = 512, cols = 16, rows = 22;
   const hgt = new Float32Array(W * H);
   const fib = valueNoise(W, H, 3, 11);
+  const tone = new Float32Array(W * H), r = rng(31), cellTone = new Float32Array(cols * rows * 2).map(() => r() * 2 - 1);
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const cx = (x / W) * cols, cy = (y / H) * rows;
     const fx = cx - Math.floor(cx), fy = cy - Math.floor(cy);
@@ -84,13 +85,13 @@ export function knit() {
       const a = 0.55 * sg, c = Math.cos(a), s = Math.sin(a);
       const u = (dx * c + dy * s) / 0.2, w = (-dx * s + dy * c) / 0.6;
       const r2 = u * u + w * w;
-      if (r2 < 1) v = Math.max(v, Math.sqrt(1 - r2));
+      if (r2 < 1) { const h = Math.sqrt(1 - r2); if (h > v) { v = h; tone[y * W + x] = cellTone[(Math.floor(cy) * cols + Math.floor(cx)) * 2 + (ax < 0.5 ? 0 : 1)]; } }
     }
     hgt[y * W + x] = v * 0.85 + fib[y * W + x] * 0.15;
   }
   return {
     normal: tex(normalFromHeight(hgt, W, H, 3.2)),
-    color: tex(grayFromHeight(hgt, W, H, (v) => 0.62 + 0.38 * v), { srgb: true }),
+    color: tex(grayFromHeight(hgt, W, H, (v, i) => (0.6 + 0.4 * v) * (1 + 0.16 * tone[i]) + (fib[i] - 0.5) * 0.08), { srgb: true }),
     rough: tex(grayFromHeight(hgt, W, H, (v) => 0.95 - 0.25 * v)),
   };
 }
@@ -145,7 +146,9 @@ export function carbon() {
 export function foam() {
   const W = 2048, H = 512;
   const hgt = new Float32Array(W * H);
-  const n1 = valueNoise(W, H, 2, 5), n2 = valueNoise(W, H, 9, 7);
+  const n1 = valueNoise(W, H, 2, 5), n2 = valueNoise(W, H, 9, 7), pr = rng(41);
+  const pores = new Float32Array(W * H);
+  for (let i = 0; i < 26000; i++) { const x = Math.floor(pr() * W), y = Math.floor(pr() * H), rr = 1 + pr() * 1.6; for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) { const d = Math.hypot(dx, dy) / rr; const xx = x + dx, yy = y + dy; if (d < 1 && xx >= 0 && xx < W && yy >= 0 && yy < H) pores[yy * W + xx] = Math.max(pores[yy * W + xx], 1 - d * d); } }
   for (let y = 0; y < H; y++) {
     const half = y < H / 2 ? 0 : 1;              // 0 — латераль, 1 — медиаль
     const hg = 1 - ((y % (H / 2)) / (H / 2));    // доля высоты подошвы: 1 — верх
@@ -161,7 +164,7 @@ export function foam() {
       // верхний слой: плавная канавка
       const gl = 0.76 + 0.05 * Math.sin(u * 9 + half);
       v -= Math.exp(-(((hg - gl) / 0.018) ** 2)) * 0.7 * smooth(0.04, 0.12, u) * (1 - smooth(0.9, 0.98, u));
-      hgt[y * W + x] = v + n1[y * W + x] * 0.05 + n2[y * W + x] * 0.05;
+      hgt[y * W + x] = v + n1[y * W + x] * 0.06 + n2[y * W + x] * 0.05 - pores[y * W + x] * 0.09;
     }
   }
   // печать на латеральной стороне пятки
@@ -176,7 +179,34 @@ export function foam() {
   return {
     normal: tex(normalFromHeight(hgt, W, H, 6, false), { repeat: false }),
     color: tex(det, { srgb: true, repeat: false }),
+    rough: tex(grayFromHeight(hgt, W, H, (v, i) => 0.58 + 0.12 * n2[i] + 0.25 * pores[i]), { repeat: false }),
   };
+}
+
+// вентиляционная перфорация: шестиугольная сетка отверстий в овальной зоне
+export function holes() {
+  const W = 1024, H = 1024, c = canvas(W, H), ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff';
+  const step = 26, rad = 5.2;
+  for (let row = 0; row * step * 0.87 < H; row++) for (let col = 0; col * step < W + step; col++) {
+    const x = col * step + (row % 2) * step / 2, y = row * step * 0.87;
+    const u = x / W - 0.5, v = y / H - 0.5;
+    const zone = (u / 0.42) ** 2 + (v / 0.3) ** 2;
+    if (zone > 1) continue;
+    const r = rad * (1 - 0.45 * zone);
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  return tex(c, { srgb: true, repeat: false });
+}
+
+// плетение шнурка: косые рёбра
+export function weave() {
+  const W = 128, H = 64, hgt = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const a = ((x / W) * 8 + (y / H) * 2) % 1, b = ((x / W) * 8 - (y / H) * 2 + 10) % 1;
+    hgt[y * W + x] = 0.5 * Math.sin(a * Math.PI) + 0.5 * Math.sin(b * Math.PI);
+  }
+  return tex(normalFromHeight(hgt, W, H, 2.2));
 }
 
 // ---------------------------------------------------------------------

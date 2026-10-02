@@ -163,13 +163,38 @@ function meridian(s) {
   merCache.set(key, m);
   return m;
 }
-export function upperPoint(s, t) {
+function basePoint(s, t) {
   const m = meridian(((s % 1) + 1) % 1), target = clamp(t) * m.len;
   let i = 1;
   while (i < m.cum.length - 1 && m.cum[i] < target) i++;
   const f = (target - m.cum[i - 1]) / Math.max(1e-9, m.cum[i] - m.cum[i - 1]);
   const a = m.pts[i - 1], b = m.pts[i];
   return [lerp(a[0], b[0], f), lerp(a[1], b[1], f), lerp(a[2], b[2], f)];
+}
+function frameNormal(fn, s, t) {
+  const e = 2e-3;
+  const a = fn(s + e, t), b = fn(s - e, t), c = fn(s, Math.min(1, t + e)), d = fn(s, Math.max(0, t - e));
+  const du = [a[0] - b[0], a[1] - b[1], a[2] - b[2]], dv = [c[0] - d[0], c[1] - d[1], c[2] - d[2]];
+  const n = [du[1] * dv[2] - du[2] * dv[1], du[2] * dv[0] - du[0] * dv[2], du[0] * dv[1] - du[1] * dv[0]];
+  const l = Math.hypot(...n) || 1;
+  return n.map((v) => v / l);
+}
+// трикотаж не идеально гладкий: мягкие волны и два залома на сгибе стопы
+function relief(p, t) {
+  const top = smooth(0.35, 0.8, t) * (1 - smooth(0.93, 1, t));
+  let d = 0.0016 * Math.sin(p[0] * 23 + p[2] * 9) * Math.sin(p[1] * 17 - p[0] * 5) * smooth(0.05, 0.25, t);
+  for (const [xc, w, a] of [[0.66, 0.022, 0.0042], [0.79, 0.018, 0.0032]]) {
+    const xx = p[0] - xc + 0.18 * p[2] + 0.006 * Math.sin(p[2] * 40);
+    d -= a * Math.exp(-((xx / w) ** 2)) * top;
+  }
+  return d;
+}
+export function upperPoint(s, t) {
+  const p = basePoint(s, t);
+  const r = relief(p, t);
+  if (Math.abs(r) < 1e-6) return p;
+  const n = frameNormal(basePoint, s, t);
+  return [p[0] + n[0] * r, p[1] + n[1] * r, p[2] + n[2] * r];
 }
 export function upperNormal(s, t) {
   const e = 2e-3;
@@ -222,29 +247,33 @@ function ribbon(points, width, thick, upHint = [0, 1, 0], { tubular = 120, radia
 // Расцветки
 // ---------------------------------------------------------------------
 export const COLORWAYS = {
-  ember: { name: 'Ember', upperA: '#141518', upperB: '#5c2412', lining: '#2b2c31', cage: '#24262c', foamTop: '#f3f1ec', foamBottom: '#ff5a1f', outsole: '#1c1d21', logo: '#ff6326', laces: '#f3f1ec', overlay: '#0d0e11', tab: '#ff5a1f', glow: '#ff6a2a' },
-  glacier: { name: 'Glacier', upperA: '#eef1f4', upperB: '#bfdcf0', lining: '#c9d4dc', cage: '#dfe8ef', foamTop: '#ffffff', foamBottom: '#58cff9', outsole: '#2a3946', logo: '#20aef2', laces: '#ffffff', overlay: '#d6e0e7', tab: '#20aef2', glow: '#47c4ff' },
-  volt: { name: 'Volt', upperA: '#c3ee2e', upperB: '#efff9a', lining: '#22251a', cage: '#141517', foamTop: '#17181b', foamBottom: '#c9f03c', outsole: '#121315', logo: '#121315', laces: '#121315', overlay: '#191b10', tab: '#121315', glow: '#d4ff4a' },
+  ember: { name: 'Ember', stitch: '#6a6c74', hole: '#030304', aglet: '#ff5a1f', upperA: '#141518', upperB: '#5c2412', lining: '#2b2c31', cage: '#24262c', foamTop: '#f3f1ec', foamBottom: '#ff5a1f', outsole: '#1c1d21', logo: '#ff6326', laces: '#f3f1ec', overlay: '#0d0e11', tab: '#ff5a1f', glow: '#ff6a2a' },
+  glacier: { name: 'Glacier', stitch: '#8ea7ba', hole: '#56677a', aglet: '#20aef2', upperA: '#eef1f4', upperB: '#bfdcf0', lining: '#c9d4dc', cage: '#dfe8ef', foamTop: '#ffffff', foamBottom: '#58cff9', outsole: '#2a3946', logo: '#20aef2', laces: '#ffffff', overlay: '#d6e0e7', tab: '#20aef2', glow: '#47c4ff' },
+  volt: { name: 'Volt', stitch: '#3c4418', hole: '#1b1f0a', aglet: '#121315', upperA: '#c3ee2e', upperB: '#efff9a', lining: '#22251a', cage: '#141517', foamTop: '#17181b', foamBottom: '#c9f03c', outsole: '#121315', logo: '#121315', laces: '#121315', overlay: '#191b10', tab: '#121315', glow: '#d4ff4a' },
 };
 
 // ---------------------------------------------------------------------
 // Сборка
 // ---------------------------------------------------------------------
 export function buildShoe() {
-  const knit = TX.knit(), tread = TX.tread(), carbon = TX.carbon(), foam = TX.foam(), logoTex = TX.logo();
+  const knit = TX.knit(), tread = TX.tread(), carbon = TX.carbon(), foam = TX.foam(), logoTex = TX.logo(), holesTex = TX.holes(), weave = TX.weave();
   const tabLabel = TX.label('PULSE', 512, 128, 72);
   const M = {
     upper: new THREE.MeshPhysicalMaterial({ vertexColors: true, map: knit.color, normalMap: knit.normal, normalScale: new THREE.Vector2(1.4, 1.4), roughnessMap: knit.rough, roughness: 1, sheen: 0.35, sheenRoughness: 0.5, sheenColor: new THREE.Color('#bfc3cc') }),
     lining: new THREE.MeshPhysicalMaterial({ color: '#333', map: knit.color, roughness: 0.95, side: THREE.BackSide }),
     collar: new THREE.MeshPhysicalMaterial({ color: '#444', normalMap: knit.normal, normalScale: new THREE.Vector2(0.5, 0.5), roughness: 0.85, sheen: 0.3, sheenRoughness: 0.6, sheenColor: new THREE.Color('#9aa0aa') }),
-    foamTop: new THREE.MeshPhysicalMaterial({ color: '#fff', map: foam.color, normalMap: foam.normal, normalScale: new THREE.Vector2(0.8, 0.8), roughness: 0.5, clearcoat: 0.15, clearcoatRoughness: 0.45, sheen: 0.25, sheenRoughness: 0.6, sheenColor: new THREE.Color('#ffffff') }),
+    foamTop: new THREE.MeshPhysicalMaterial({ color: '#fff', map: foam.color, normalMap: foam.normal, normalScale: new THREE.Vector2(1, 1), roughnessMap: foam.rough, roughness: 1, clearcoat: 0.12, clearcoatRoughness: 0.5, sheen: 0.25, sheenRoughness: 0.6, sheenColor: new THREE.Color('#ffffff') }),
     foamBottom: null,
-    plate: new THREE.MeshPhysicalMaterial({ color: '#fff', map: carbon.color, roughnessMap: carbon.rough, roughness: 1, clearcoat: 1, clearcoatRoughness: 0.06 }),
+    plate: new THREE.MeshPhysicalMaterial({ color: '#fff', map: carbon.color, roughnessMap: carbon.rough, roughness: 1, clearcoat: 1, clearcoatRoughness: 0.06, anisotropy: 0.8, anisotropyRotation: 0.5 }),
+    stitch: new THREE.MeshPhysicalMaterial({ color: '#666', roughness: 0.8, sheen: 1, sheenColor: new THREE.Color('#ffffff') }),
+    holes: new THREE.MeshPhysicalMaterial({ color: '#050506', map: holesTex, transparent: true, alphaTest: 0.45, roughness: 1, polygonOffset: true, polygonOffsetFactor: -1 }),
+    aglet: new THREE.MeshPhysicalMaterial({ color: '#222', roughness: 0.25, clearcoat: 1, clearcoatRoughness: 0.1 }),
+    bite: new THREE.MeshPhysicalMaterial({ color: '#09090b', roughness: 0.6 }),
     outsole: new THREE.MeshPhysicalMaterial({ color: '#222', map: tread.color, normalMap: tread.normal, normalScale: new THREE.Vector2(1.2, 1.2), roughnessMap: tread.rough, roughness: 1 }),
     cage: new THREE.MeshPhysicalMaterial({ color: '#444', roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.12 }),
     overlay: new THREE.MeshPhysicalMaterial({ color: '#111', normalMap: knit.normal, normalScale: new THREE.Vector2(0.12, 0.12), roughness: 0.3, clearcoat: 0.8, clearcoatRoughness: 0.18 }),
     logo: new THREE.MeshPhysicalMaterial({ color: '#f60', map: logoTex, transparent: true, alphaTest: 0.35, roughness: 0.22, metalness: 0.15, clearcoat: 1, clearcoatRoughness: 0.05, polygonOffset: true, polygonOffsetFactor: -2 }),
-    laces: new THREE.MeshPhysicalMaterial({ color: '#eee', normalMap: knit.normal, normalScale: new THREE.Vector2(0.6, 0.6), roughness: 0.7, sheen: 1, sheenRoughness: 0.5, sheenColor: new THREE.Color('#ffffff') }),
+    laces: new THREE.MeshPhysicalMaterial({ color: '#eee', normalMap: weave, normalScale: new THREE.Vector2(1.1, 1.1), roughness: 0.7, sheen: 0.45, sheenRoughness: 0.6, sheenColor: new THREE.Color('#9a9a9a') }),
     metal: new THREE.MeshPhysicalMaterial({ color: '#d4d7dc', metalness: 1, roughness: 0.22 }),
     tab: new THREE.MeshPhysicalMaterial({ color: '#f60', roughness: 0.38, clearcoat: 0.7, clearcoatRoughness: 0.2 }),
     tabText: new THREE.MeshPhysicalMaterial({ color: '#fff', map: tabLabel, transparent: true, alphaTest: 0.4, roughness: 0.4, polygonOffset: true, polygonOffsetFactor: -2 }),
@@ -366,10 +395,55 @@ export function buildShoe() {
     const sT = sOfLam(0.5, sd), p1 = upperPoint(sT, 0.9), n1 = upperNormal(sT, 0.9), p2 = upperPoint(sOfLam(0.43, sd), 0.72), n2 = upperNormal(sOfLam(0.43, sd), 0.72);
     add('upper', ribbon([K, [K[0] + 0.02, K[1] + 0.01, K[2] + sd * 0.06], [p1[0] + n1[0] * 0.018, p1[1] + n1[1] * 0.018, p1[2] + n1[2] * 0.018], [p2[0] + n2[0] * 0.014, p2[1] + n2[1] * 0.014, p2[2] + n2[2] * 0.014]], 0.016, 0.005, [0, 1, 0], { tubular: 50, radial: 8 }), M.laces, 'tail' + sd);
     add('upper', laceSeg(eyelets[6][sd > 0 ? 0 : 1].p, K, 0.01), M.laces, 'toKnot' + sd);
+    const tip = new THREE.Vector3(p2[0] + n2[0] * 0.014, p2[1] + n2[1] * 0.014, p2[2] + n2[2] * 0.014), prev = new THREE.Vector3(p1[0] + n1[0] * 0.018, p1[1] + n1[1] * 0.018, p1[2] + n1[2] * 0.018);
+    const ag = add('upper', new THREE.CylinderGeometry(0.0062, 0.0062, 0.05, 12), M.aglet, 'aglet' + sd);
+    ag.position.copy(tip); ag.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), tip.clone().sub(prev).normalize());
   }
   // петля на пятке
   const hb = rim(0, 1);
   add('upper', ribbon([[hb[0] + 0.03, hb[1] - 0.05, hb[2] - 0.05], [hb[0] - 0.04, hb[1] + 0.03, hb[2] - 0.045], [hb[0] - 0.07, hb[1] + 0.1, hb[2]], [hb[0] - 0.04, hb[1] + 0.03, hb[2] + 0.045], [hb[0] + 0.03, hb[1] - 0.05, hb[2] + 0.05]], 0.03, 0.007, [-1, 0.3, 0], { tubular: 60, radial: 10 }), M.tab, 'heelTab');
+
+  // ---- шов между верхом и подошвой (там, где трикотаж уходит в пену)
+  const bitePts = [];
+  for (let i = 0; i < 200; i++) {
+    const s = i / 200, u = lamOf(s);
+    const rimY = top(u) + 0.025 + 0.07 * (1 - smooth(0.05, 0.45, u)) - 0.004;
+    let t = 0;
+    while (t < 0.4 && upperPoint(s, t)[1] < rimY) t += 0.005;
+    const p = upperPoint(s, t), n = upperNormal(s, t);
+    bitePts.push(new THREE.Vector3(p[0] + n[0] * 0.003, p[1], p[2] + n[2] * 0.003));
+  }
+  add('upper', new THREE.TubeGeometry(new THREE.CatmullRomCurve3(bitePts, true, 'centripetal'), 400, 0.0035, 6, true), M.bite, 'biteLine').castShadow = false;
+
+  // ---- строчка: короткие стежки вдоль края накладок
+  const stitchGeo = new THREE.CapsuleGeometry(0.0016, 0.009, 2, 6).rotateZ(Math.PI / 2);
+  const stitchRuns = [];
+  const runAlong = (sOf, tOf, off, step = 0.019) => {
+    const pts = [];
+    for (let i = 0; i <= 200; i++) { const a = i / 200, s = sOf(a), t = tOf(a), p = upperPoint(s, t), n = upperNormal(s, t); pts.push({ p: new THREE.Vector3(p[0] + n[0] * off, p[1] + n[1] * off, p[2] + n[2] * off), n: new THREE.Vector3(...n) }); }
+    let acc = 0, next = step * 0.5;
+    for (let i = 1; i < pts.length; i++) {
+      const seg = pts[i].p.distanceTo(pts[i - 1].p);
+      if (acc + seg >= next) { stitchRuns.push({ p: pts[i].p, d: pts[i].p.clone().sub(pts[i - 1].p).normalize(), n: pts[i].n }); next += step; }
+      acc += seg;
+    }
+  };
+  runAlong((a) => lerp(-0.08, 0.08, a), (a) => (0.6 - 0.32 * (2 * ((a - 0.0) / 1) - 1) ** 2) * 0.9, 0.0075);
+  runAlong((a) => lerp(0.435, 0.565, a), (a) => 0.005 + 0.86 * (0.16 - 0.1 * (2 * a - 1) ** 2), 0.0065);
+  for (const side of [1, -1]) runAlong((a) => sOfLam(lerp(0.5, 0.99, a), side), () => 0.875, 0.0065);
+  const stitches = new THREE.InstancedMesh(stitchGeo, M.stitch, stitchRuns.length);
+  const sm = new THREE.Matrix4(), sq = new THREE.Quaternion();
+  stitchRuns.forEach((r, i) => {
+    const x = r.d, z = r.n.clone().sub(x.clone().multiplyScalar(r.n.dot(x))).normalize(), y = new THREE.Vector3().crossVectors(z, x);
+    sm.makeBasis(x, y, z); sq.setFromRotationMatrix(sm);
+    sm.compose(r.p, sq, new THREE.Vector3(1, 1, 0.6));
+    stitches.setMatrixAt(i, sm);
+  });
+  stitches.name = 'stitches';
+  groups.upper.add(stitches);
+
+  // ---- вентиляционная перфорация на носке (проекция сверху)
+  add('upper', patch(60, 40, (a) => lerp(0.4, 0.6, a), (a, b) => lerp(0.2, 0.82, b), 0.0025, (q) => [(q[0] - 0.62) / 0.9, (q[2] + 0.48) / 0.96]), M.holes, 'perforation').castShadow = false;
 
   // ---- якоря для подписей (локальные координаты)
   const anchors = {
@@ -380,6 +454,23 @@ export function buildShoe() {
     outsole: [0.9, soleBottom(uOfX(0.9)) - 0.02, last(uOfX(0.9), 0.035).lat - 0.05],
     logo: upperPoint(0.24, 0.35),
     heel: rim(0, 1),
+  };
+  // точки для макропланов: место, нормаль и ракурс
+  const near = (x, y, side) => { // ближайшая к (x, y) точка верха на нужной стороне
+    let best = null;
+    for (let i = 0; i <= 120; i++) for (let j = 0; j <= 40; j++) {
+      const ss = side > 0 ? lerp(0.02, 0.48, i / 120) : lerp(0.52, 0.98, i / 120), tt = j / 40, q = upperPoint(ss, tt);
+      const d = (q[0] - x) ** 2 + (q[1] - y) ** 2;
+      if (!best || d < best.d) best = { d, s: ss, t: tt };
+    }
+    return { p: upperPoint(best.s, best.t), n: upperNormal(best.s, best.t) };
+  };
+  const macro = {
+    knit: { p: upperPoint(0.36, 0.42), n: upperNormal(0.36, 0.42) },
+    planet: near(0.27, top(uOfX(0.27)) + 0.36, 1),
+    laces: eyelets.map((row) => lerp3(row[0].p, row[1].p, 0.5, 0.03)),
+    heel: rim(0, 1),
+    toe: upperPoint(0.5, 0.35),
   };
 
   function setColorway(name) {
@@ -395,12 +486,13 @@ export function buildShoe() {
     M.outsole.color.set(cw.outsole);
     M.overlay.color.set(cw.overlay);
     M.cage.color.set(cw.cage);
+    M.stitch.color.set(cw.stitch); M.holes.color.set(cw.hole); M.aglet.color.set(cw.aglet);
     M.logo.color.set(cw.logo);
-    M.laces.color.set(cw.laces);
+    M.laces.color.set(cw.laces).multiplyScalar(0.8);
     M.tab.color.set(cw.tab);
     M.tabText.color.set(name === 'volt' ? '#c9f03c' : '#ffffff');
     root.userData.colorway = name;
   }
   setColorway('ember');
-  return { root, groups, materials: M, anchors, setColorway };
+  return { root, groups, materials: M, anchors, macro, setColorway };
 }

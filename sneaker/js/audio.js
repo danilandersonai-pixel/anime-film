@@ -1,9 +1,9 @@
 // audio.js — музыка и звуковые акценты ролика, синтезированные WebAudio.
 // Дорожка рендерится один раз в OfflineAudioContext: тот же буфер играет
 // в браузере и уходит в MP4. Время каждого удара — из таймлайна.
-import { SHOTS, FLASHES, IMPACT } from './timeline.js';
+import { SHOTS, FLASHES, IMPACT, STROBES } from './timeline.js';
 
-export const LENGTH = 22.5;
+export const LENGTH = 32.5;
 const BEAT = 0.5;          // 120 ударов в минуту
 const N = (m) => 440 * Math.pow(2, (m - 69) / 12);
 // ми минор: Em — C — G — D, такт = 2 с
@@ -20,6 +20,7 @@ export async function renderTrack(sampleRate = 48000) {
 function build(ctx) {
   const r = rng(2026);
   const out = ctx.createGain(); out.gain.value = 0.8;
+  out.gain.setValueAtTime(0.8, LENGTH - 1.2); out.gain.linearRampToValueAtTime(0, LENGTH - 0.1);
   const comp = ctx.createDynamicsCompressor();
   comp.threshold.value = -16; comp.ratio.value = 3.5; comp.attack.value = 0.004; comp.release.value = 0.18; comp.knee.value = 8;
   out.connect(comp).connect(ctx.destination);
@@ -143,48 +144,69 @@ function build(ctx) {
     c.start(t); mo.start(t); c.stop(t + dur + 0.1); mo.stop(t + dur + 0.1);
   }
 
-  // ---- 0–4: тьма, сердцебиение, полоса света
+  // ---- 0–4: тьма, сердцебиение, полоса света облетает кроссовок
   pad(0.2, 4.0, [52, 59], 0.035, 2.5);
   for (const b of [0.6, 1.6, 2.6]) { kick(b, 0.45); kick(b + 0.24, 0.3); }
-  whoosh(0.3, 3.1, 500, 5000, -0.85, 0.85, 0.3);
+  whoosh(0.3, 3.6, 500, 5000, -0.85, 0.85, 0.3);
   bell(2.55, 76, 0.07, 2.5);
   riser(2.0, 2.0, 0.25);
-  // ---- 4–17: ритм
-  const beatEnd = SHOTS.pack;
-  for (let t = SHOTS.hero; t < beatEnd - 0.01; t += BEAT) {
-    const quiet = (t > 12.74 && t < 13.5) || (t > 11.2 && t < 11.75);
-    if (!quiet) kick(t, 1);
-    hat(t + BEAT / 2, 0.16, (Math.round((t - 4) / BEAT) % 4) === 3);
-    if (t >= SHOTS.run && !quiet) { hat(t + BEAT / 4, 0.08); hat(t + 3 * BEAT / 4, 0.08); }
-    const beatN = Math.round((t - SHOTS.hero) / BEAT);
-    if (beatN % 2 === 1 && !quiet) clap(t, 0.32);
-    const bar = BARS[Math.floor((t - SHOTS.hero) / 2) % 4];
-    if (!quiet) { bass(t, bar[0], 0.22); bass(t + BEAT / 2, bar[0] + (beatN % 4 === 3 ? 7 : 0), 0.2, 0.22); }
+  // ---- 4–10: макропланы — ритм вполсилы, без хлопков
+  for (let t = SHOTS.knit; t < SHOTS.pull - 0.01; t += BEAT) {
+    const n = Math.round((t - 4) / BEAT), bar = BARS[Math.floor((t - 4) / 2) % 4];
+    if (n % 2 === 0) kick(t, 0.7);
+    hat(t + BEAT / 2, 0.1, n % 4 === 3);
+    if (n % 4 === 0) bass(t, bar[0], 0.9, 0.18);
   }
-  for (let b = 0; b < 6; b++) { const t = SHOTS.hero + b * 2; pad(t, 2.05, BARS[b % 4][1], 0.03, 0.15); }
+  for (let b = 0; b < 3; b++) pad(4 + b * 2, 2.05, BARS[b][1], 0.03, 0.15);
+  for (const t of [5.7, 7.7]) whoosh(t, 0.35, 700, 4000, -0.5, 0.5, 0.22);
+  for (const t of [4.3, 6.3, 8.3]) blip(t, N(83), 0.06);
+  // ---- 10–27: полный бит; перед переворотом, сборкой и приземлением — пауза
+  const hush = (t) => (t > 15.2 && t < 16) || (t > 19.2 && t < 19.75) || (t > 20.2 && t < IMPACT);
+  for (let t = SHOTS.pull; t < SHOTS.pack - 0.01; t += BEAT) {
+    const n = Math.round((t - 4) / BEAT), bar = BARS[Math.floor((t - 4) / 2) % 4], q = hush(t);
+    if (!q) kick(t, 1);
+    hat(t + BEAT / 2, 0.16, n % 4 === 3);
+    if (t >= IMPACT && !q) { hat(t + BEAT / 4, 0.08); hat(t + 3 * BEAT / 4, 0.08); }
+    if (n % 2 === 1 && !q) clap(t, 0.32);
+    if (!q) { bass(t, bar[0], 0.22); bass(t + BEAT / 2, bar[0] + (n % 4 === 3 ? 7 : 0), 0.2, 0.22); }
+  }
+  for (let b = 0; b < 7; b++) { const t = 10 + b * 2; pad(t, 2.05, BARS[(b + 3) % 4][1], 0.03, 0.15); }
   // ---- удары на вспышках
   for (const [t, a] of FLASHES) { boom(t, a + 0.35); crash(t, 0.22 * (a + 0.5)); }
-  // ---- 8–12: взрыв-схема
-  whoosh(8.05, 0.9, 400, 3500, -0.4, 0.4, 0.4);
-  [9.0, 9.35, 9.7, 10.05, 10.4].forEach((t, i) => blip(t, N(76 + [0, 3, 7, 10, 12][i]), 0.11));
-  whoosh(11.05, 0.7, 3000, 300, 0.4, -0.4, 0.35);
-  clap(11.75, 0.6);
-  // ---- 12–15: бег
-  whoosh(12.0, 0.9, 800, 3000, 0.9, -0.9, 0.28);
-  whoosh(12.55, 0.45, 1500, 600, 0.5, 0, 0.3);
+  // ---- 10–12: отъезд от логотипа
+  whoosh(10.0, 1.6, 3000, 400, 0.3, -0.3, 0.25);
+  bell(10.95, 83, 0.07, 2);
+  // ---- 12–14: сверху, по кроссовку бежит блик
+  whoosh(12.1, 1.8, 600, 3000, -0.7, 0.7, 0.16);
+  // ---- 14–16: взлёт и переворот
+  whoosh(14.0, 0.6, 400, 2500, 0, 0.3, 0.3);
+  whoosh(14.3, 1.1, 2000, 600, 0.6, -0.6, 0.22);
+  riser(14.4, 1.6, 0.22);
+  blip(14.65, N(83), 0.06);
+  // ---- 16–20: взрыв-схема
+  whoosh(16.1, 0.9, 400, 3500, -0.4, 0.4, 0.4);
+  [17.0, 17.35, 17.7, 18.05, 18.4].forEach((t, i) => blip(t, N(76 + [0, 3, 7, 10, 12][i]), 0.11));
+  whoosh(19.1, 0.65, 3000, 300, 0.4, -0.4, 0.35);
+  clap(19.75, 0.6);
+  // ---- 20–23: бег
+  whoosh(20.0, 0.9, 800, 3000, 0.9, -0.9, 0.28);
+  whoosh(20.55, 0.45, 1500, 600, 0.5, 0, 0.3);
   boom(IMPACT, 1.2);
   crash(IMPACT, 0.3, 2.2);
-  whoosh(13.6, 0.7, 500, 5000, 0, 0.6, 0.4);
-  blip(14.2, N(83), 0.1);
-  // ---- 15–17: расцветки
-  stab(15, [64, 67, 71, 76]); stab(16, [62, 66, 69, 74]);
-  whoosh(14.75, 0.25, 800, 4000, -0.3, 0.3, 0.3); whoosh(15.75, 0.25, 800, 4000, 0.3, -0.3, 0.3);
-  // ---- 17–22: финал
-  pad(17, 5.2, [40, 52, 55, 59, 66], 0.05, 0.05);
-  bass(17, 28, 2.5, 0.35);
-  bell(17.35, 88, 0.16, 3.5); bell(17.6, 95, 0.1, 3.5);
-  whoosh(18.4, 0.8, 600, 2400, -0.2, 0.2, 0.18);
-  blip(19.0, N(88), 0.07);
+  whoosh(21.6, 0.7, 500, 5000, 0, 0.6, 0.4);
+  blip(22.1, N(83), 0.1);
+  // ---- 23–25: анфас, контровые вспыхивают по ударам
+  whoosh(22.75, 0.3, 800, 4000, -0.3, 0.3, 0.25);
+  STROBES.forEach((t, i) => { boom(t, 0.55); stab(t, BARS[i][1].map((m) => m + 12), 0.08); });
+  // ---- 25–27: расцветки
+  stab(25, [64, 67, 71, 76]); stab(26, [62, 66, 69, 74]);
+  whoosh(24.75, 0.25, 800, 4000, -0.3, 0.3, 0.3); whoosh(25.75, 0.25, 800, 4000, 0.3, -0.3, 0.3);
+  // ---- 27–32: финал
+  pad(27, 5.4, [40, 52, 55, 59, 66], 0.05, 0.05);
+  bass(27, 28, 2.5, 0.35);
+  bell(27.35, 88, 0.16, 3.5); bell(27.6, 95, 0.1, 3.5);
+  whoosh(28.2, 2.0, 600, 2400, -0.6, 0.6, 0.18);
+  blip(29.4, N(88), 0.07);
 }
 
 // AudioBuffer → WAV (16 бит)

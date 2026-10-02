@@ -6,6 +6,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { Reflector } from 'three/addons/objects/Reflector.js';
@@ -40,7 +41,7 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
   renderer.setPixelRatio(pixelRatio);
   renderer.setSize(width, height, false);
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMapping = THREE.NeutralToneMapping; // честные цвета продукта
   renderer.toneMappingExposure = 1.0;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.shadowMap.enabled = true;
@@ -51,8 +52,9 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
   const camera = new THREE.PerspectiveCamera(28, width / height, 0.05, 150);
   camera.layers.enable(SHOE_LAYER);
   const pmrem = new THREE.PMREMGenerator(renderer);
-  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  scene.environment = studioEnv(pmrem);
   scene.environmentIntensity = 0.3;
+  void RoomEnvironment;
 
   // ---- фон: тёмная циклорама со свечением
   const bgMat = new THREE.ShaderMaterial({
@@ -223,12 +225,19 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
   composer.setPixelRatio(pixelRatio);
   composer.setSize(width, height);
   const renderPass = new RenderPass(scene, camera);
+  // затенение в щелях и под шнурками
+  const gtao = new GTAOPass(scene, camera, width * pixelRatio, height * pixelRatio);
+  gtao.output = GTAOPass.OUTPUT.Default;
+  gtao.blendIntensity = 1;
+  gtao.updateGtaoMaterial({ radius: 0.16, distanceExponent: 1.6, thickness: 1.0, scale: 1.1, samples: 12, distanceFallOff: 1 });
+  gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 5, rings: 2, samples: 10 });
+  gtao.enabled = !Q.has('noao');
   const bokeh = new BokehPass(scene, camera, { focus: 3, aperture: 0.002, maxblur: 0.006 });
   bokeh.enabled = false;
-  const bloom = new UnrealBloomPass(new THREE.Vector2(width, height), 0.5, 0.6, 0.85);
+  const bloom = new UnrealBloomPass(new THREE.Vector2(width, height), 0.5, 0.6, 0.92);
   const output = new OutputPass();
   const final = new ShaderPass(FinalShader);
-  composer.addPass(renderPass); composer.addPass(bokeh); composer.addPass(bloom); composer.addPass(output); composer.addPass(final);
+  composer.addPass(renderPass); composer.addPass(gtao); composer.addPass(bokeh); composer.addPass(bloom); composer.addPass(output); composer.addPass(final);
 
   function setSize(w, h, pr = pixelRatio) {
     renderer.setPixelRatio(pr);
@@ -253,8 +262,26 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
 
   return {
     renderer, scene, camera, composer, adopt, render, setSize, setStreaks,
-    lights: { key, rimL, rimR, sweep, sun }, bars, barMats: [barMat, barMat2], sweepBar, bigText, bg: bgMat, floor: floorMat, bloom, bokeh, final, shadowCam,
+    lights: { key, rimL, rimR, sweep, sun }, gtao, bars, barMats: [barMat, barMat2], sweepBar, bigText, bg: bgMat, floor: floorMat, bloom, bokeh, final, shadowCam,
   };
+}
+
+// студийная карта окружения: тёмная комната с софтбоксами — блики как на фотосъёмке
+function studioEnv(pmrem) {
+  const env = new THREE.Scene();
+  env.add(new THREE.Mesh(new THREE.SphereGeometry(20, 32, 16), new THREE.MeshBasicMaterial({ color: '#07070a', side: THREE.BackSide })));
+  const panel = (w, h, pos, color, k) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(k), side: THREE.DoubleSide }));
+    m.position.set(...pos); m.lookAt(0, 0.6, 0); env.add(m);
+  };
+  panel(6, 3, [0.5, 7, 1.2], '#ffffff', 7);      // большой верхний софтбокс
+  panel(0.9, 7, [-6.5, 2.6, 1.5], '#f2f6ff', 6); // полоса слева
+  panel(0.9, 7, [6.5, 2.6, -1.2], '#fff4ea', 6); // полоса справа
+  panel(5, 1.6, [0, 1.6, -7.5], '#ffffff', 1.6); // задний свет
+  panel(3.5, 2.4, [2.5, 2.2, 7], '#ffffff', 2.4); // фронтальная заливка
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.MeshBasicMaterial({ color: '#16161a' }));
+  floor.rotation.x = -Math.PI / 2; floor.position.y = -0.5; env.add(floor);
+  return pmrem.fromScene(env, 0.0).texture;
 }
 
 function mulberry(seed) { let t = seed >>> 0; return () => { t += 0x6d2b79f5; let r = Math.imul(t ^ (t >>> 15), t | 1); r ^= r + Math.imul(r ^ (r >>> 7), r | 61); return ((r ^ (r >>> 14)) >>> 0) / 4294967296; }; }
