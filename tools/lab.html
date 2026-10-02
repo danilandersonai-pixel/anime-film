@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Лаборатория персонажей</title>
+<style>
+@font-face { font-family: 'Caveat Local'; src: url(../fonts/caveat-cyrillic.woff2) format('woff2'); unicode-range: U+0400-045F; }
+@font-face { font-family: 'Caveat Local'; src: url(../fonts/caveat-latin.woff2) format('woff2'); unicode-range: U+0000-00FF; }
+body { margin: 0; background: #222; }
+canvas { width: 100%; display: block; }
+</style>
+</head>
+<body>
+<!-- Страница для проверки персонажей с разных ракурсов (не входит в фильм) -->
+<canvas id="c" width="1920" height="1080"></canvas>
+<script src="../js/pencil.js"></script>
+<script src="../js/space.js"></script>
+<script src="../js/figures.js"></script>
+<script>
+const P = PEN, S = SPACE, F = FIG;
+P.setTheme('paper');
+const ctx = document.getElementById('c').getContext('2d');
+const SPEC = {
+  anya: { hairKid: 'pigtails', hairAdult: 'bun', hairColor: 'hairDark', dress: 'a1', pattern: 'dots', eyes: 'hairBrown' },
+  lena: { hairKid: 'bob', hairAdult: 'bob', hairColor: 'hairBrown', dress: 'a2', pattern: 'stripes', eyes: 'a1' },
+  prab: { hairKid: 'bun', hairAdult: 'bun', hairColor: 'hairGray', dress: 'a1', pattern: 'cardigan', glasses: true, long: true, old: true },
+};
+const VIEWS = [
+  { pos: [-10, 105, 300], target: [-10, 85, 0], fov: 34 },
+  { pos: [180, 110, 200], target: [50, 72, 0], fov: 30 },
+  { pos: [55, 22, 150], target: [45, 115, 0], fov: 55 },
+  { pos: [120, 400, 300], target: [0, 50, 0], fov: 34 },
+  { pos: [80, 150, 60], target: [-75, 150, -40], fov: 26 },
+  { pos: [20, 95, 95], target: [55, 92, 0], fov: 28 },
+];
+window.labRender = function (vi, t = 1) {
+  P.RS = 1; P.fade = 0;
+  const ink = P.begin(t);
+  S.setCamera(VIEWS[vi]);
+  S.LIGHT.pos = [-260, 320, 260];
+  P.screen(ink);
+  // пол и стена
+  S.drawPoly('floor', [[-400, 0, -320], [400, 0, -320], [400, 0, 260], [-400, 0, 260]], { color: 'floor', crayon: { w: 14, gap: 10, angle: S.screenAngle([0, 0, 0], [0, 0, 1]), maxLen: 260, alpha: 0.8 } });
+  S.drawPoly('wall', [[-400, 0, -320], [400, 0, -320], [400, 280, -320], [-400, 280, -320]], { color: 'wallC', crayon: { w: 16, gap: 11, angle: -0.4 } });
+  for (let i = -6; i <= 6; i++) S.line('board' + i, [[i * 60, 0, -320], [i * 60, 0, 260]], { w: 1.2, alpha: 0.35, sketch: false });
+  // взрослая
+  F.human(SPEC.lena, { key: 'w', pos: [-75, -40], yaw: 0.45, age: 28, look: [60, 70, 0], mood: 'smile' });
+  // ребёнок с мишкой
+  const st = { key: 'c', pos: [55, 0], yaw: -0.25, age: 5, look: [-75, 140, -40], mood: 'smile' };
+  const g0 = F.rig(SPEC.anya, st);
+  const bs = 0.72;
+  const bpos = S.madd(S.madd(g0.chest, g0.T.f, g0.Hc * 0.11), g0.T.u, -g0.Hc * 0.2);
+  st.hands = [S.madd(S.madd(bpos, g0.T.r, -11 * bs), g0.T.u, 18 * bs), S.madd(S.madd(bpos, g0.T.r, 11 * bs), g0.T.u, 14 * bs)].map((q) => S.madd(q, g0.T.f, 9 * bs));
+  st.armsFront = true; st.curl = 0.8;
+  F.human(SPEC.anya, st);
+  F.bear({ key: 'b1', pos: bpos, yaw: -0.25, pitch: 0.1, s: bs, marks: { button: 1, patch: 1 } });
+  // мишка на полу
+  F.bear({ key: 'b2', pos: [150, 0, 60], yaw: -0.6, s: 0.9, ground: 0, marks: { button: 1, patch: 1, scarf: 1, clip: 1 } });
+  // старушка
+  F.human(SPEC.prab, { key: 'o', pos: [-200, -120], yaw: 0.6, age: 75, look: [55, 70, 0], mood: 'smile' });
+  S.flush();
+  P.compose(ctx);
+  return true;
+};
+window.labReady = true;
+</script>
+</body>
+</html>

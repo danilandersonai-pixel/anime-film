@@ -419,7 +419,8 @@
         t = Math.pow(clamp(u / endLen), 0.65) * Math.pow(clamp((1 - u) / (endLen * 1.2)), 0.65);
         t = 0.22 + 0.78 * t;
       }
-      return w * press * t * (0.86 + 0.14 * Math.sin(s * z / 70 + phP));
+      // o.wAt(u): вес линии вдоль контура (толще на теневой стороне)
+      return w * press * t * (0.86 + 0.14 * Math.sin(s * z / 70 + phP)) * (o.wAt ? o.wAt(u) : 1);
     };
 
     ctx.fillStyle = col(role, alpha * alphaJ * (o.dim === undefined ? 1 : o.dim));
@@ -627,6 +628,7 @@
   function camera(ctx, cam) {
     PEN.z = cam.z;
     PEN.cam = cam;
+    PEN.view = [cam.x - (W / 2 + 40) / cam.z, cam.y - (H / 2 + 40) / cam.z, cam.x + (W / 2 + 40) / cam.z, cam.y + (H / 2 + 40) / cam.z];
     for (const c of PEN.layers) {
       const k = layerScale(c);
       c.setTransform(cam.z * k, 0, 0, cam.z * k, (W / 2 - cam.x * cam.z) * k, (H / 2 - cam.y * cam.z) * k);
@@ -634,6 +636,7 @@
   }
   function screen() {
     PEN.z = 1;
+    PEN.view = [-40, -40, W + 40, H + 40];
     for (const c of PEN.layers) { const k = layerScale(c); c.setTransform(k, 0, 0, k, 0, 0); }
   }
   // зуб бумаги: выкусываем крапинки из слоя
@@ -805,7 +808,10 @@
     const bow = o.bow === undefined ? 0.07 : o.bow;
     const ca = Math.cos(ang), sa = Math.sin(ang);
     let pmin = Infinity, pmax = -Infinity, dmin = Infinity, dmax = -Infinity;
-    for (const [cx, cy] of [[shape.x0, shape.y0], [shape.x1, shape.y0], [shape.x1, shape.y1], [shape.x0, shape.y1]]) {
+    const vw = PEN.view || [-1e9, -1e9, 1e9, 1e9];
+    const bx0 = Math.max(shape.x0, vw[0]), by0 = Math.max(shape.y0, vw[1]), bx1 = Math.min(shape.x1, vw[2]), by1 = Math.min(shape.y1, vw[3]);
+    if (bx0 >= bx1 || by0 >= by1) return { segs: [], ca, sa, w };
+    for (const [cx, cy] of [[bx0, by0], [bx1, by0], [bx1, by1], [bx0, by1]]) {
       const pp = -sa * cx + ca * cy, dd = ca * cx + sa * cy;
       if (pp < pmin) pmin = pp; if (pp > pmax) pmax = pp; if (dd < dmin) dmin = dd; if (dd > dmax) dmax = dd;
     }
@@ -880,13 +886,15 @@
   function toneGrid(shape, l, cell) {
     let nx = 0, I = null, NZ = null;
     const rec = { I: 0, nz: 0 };
+    const vw = PEN.view || [-1e9, -1e9, 1e9, 1e9];
+    const gx0 = Math.max(shape.x0, vw[0]), gy0 = Math.max(shape.y0, vw[1]);
     const build = () => {
-      nx = Math.max(1, Math.ceil((shape.x1 - shape.x0) / cell) + 1);
-      const ny = Math.max(1, Math.ceil((shape.y1 - shape.y0) / cell) + 1);
+      nx = Math.max(1, Math.ceil((Math.min(shape.x1, vw[2]) - gx0) / cell) + 1);
+      const ny = Math.max(1, Math.ceil((Math.min(shape.y1, vw[3]) - gy0) / cell) + 1);
       I = new Float32Array(nx * ny).fill(NaN);
       NZ = new Float32Array(nx * ny);
       for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
-        const n = shape.test(shape.x0 + (i + 0.5) * cell, shape.y0 + (j + 0.5) * cell);
+        const n = shape.test(gx0 + (i + 0.5) * cell, gy0 + (j + 0.5) * cell);
         if (!n) continue;
         const k = j * nx + i;
         I[k] = n[0] * l[0] + n[1] * l[1] + n[2] * l[2];
@@ -897,7 +905,7 @@
       cx: shape.cx, cy: shape.cy, x0: shape.x0, y0: shape.y0, x1: shape.x1, y1: shape.y1,
       test(x, y) {
         if (!I) build();
-        const i = Math.floor((x - shape.x0) / cell), j = Math.floor((y - shape.y0) / cell);
+        const i = Math.floor((x - gx0) / cell), j = Math.floor((y - gy0) / cell);
         if (i < 0 || j < 0 || i >= nx) return null;
         const k = j * nx + i;
         if (k >= I.length) return null;
@@ -928,7 +936,7 @@
     // 2. полутень — второй слой того же мелка
     crayon(L.color, grid, Object.assign({}, C, { key: k + ':m', color: role, alpha: 0.42 * a * dens, w: 8 * ws, gap: 6.8 * ws, angle: ang + 0.65, cond: (n) => n.I < sh + 0.32 }));
     // 3. собственная тень — холодный тёмный мелок, у самого края остаётся рефлекс
-    crayon(L.color, grid, Object.assign({}, C, { key: k + ':s', color: role + ':sh', alpha: 0.55 * a, w: 7 * ws, gap: 5.6 * ws, angle: ang - 0.55, cond: (n) => n.I < sh && n.nz > 0.16 }));
+    crayon(L.color, grid, Object.assign({}, C, { key: k + ':s', color: role + ':sh', alpha: 0.55 * a * (o.shA === undefined ? 1 : o.shA), w: 7 * ws, gap: 5.6 * ws, angle: ang - 0.55, cond: (n) => n.I < sh && n.nz > 0.16 }));
     // 4. графит в самой глубокой тени
     if (!o.noCore) crayon(L.graphite, grid, Object.assign({}, C, { key: k + ':g', color: 'line', alpha: 0.32 * a, w: 1.5, gap: 4.2, angle: ang + 1.15, maxLen: 42, bow: 0.1, cond: (n) => n.I < sh - 0.16 && n.nz > 0.28 }));
     // 5. блик белым мелком
