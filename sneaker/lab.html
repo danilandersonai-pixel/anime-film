@@ -1,0 +1,21 @@
+<title>Лаборатория кроссовка</title>
+<style>html,body{margin:0;background:#222}canvas{display:block}</style>
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }</script>
+<script type="module">
+// Страница проверки модели с шести ракурсов (не входит в ролик)
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { buildShoe } from './js/shoe.js';
+const W = 960, H = 540;
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(W, H); renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.0;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color('#5a5d63');
+const pm = new THREE.PMREMGenerator(renderer); scene.environment = pm.fromScene(new RoomEnvironment(), 0.04).texture;
+const key = new THREE.DirectionalLight('#fff', 2.2); key.position.set(-3, 6, 4); scene.add(key);
+const shoe = buildShoe(); scene.add(shoe.root);
+const cam = new THREE.PerspectiveCamera(28, W / H, 0.05, 100);
+const VIEWS = [[0, 0.55, 8.5, 0, 0.45, 0], [5.2, 2.6, 5.5, 0.1, 0.4, 0], [0.01, 9, 0.2, 0, 0, 0], [-5, 2.2, -4.5, 0, 0.45, 0], [0, 0.6, -8.5, 0, 0.45, 0], [6.5, 1.2, 1.2, 0, 0.5, 0], [1.6, 1.6, 2.2, -0.1, 0.75, 0.05], [0.5, -6, 2, 0, 0.2, 0]];
+window.labRender = (i, cw) => { if (cw) shoe.setColorway(cw); const v = VIEWS[i]; cam.position.set(v[0], v[1], v[2]); cam.lookAt(v[3], v[4], v[5]); renderer.render(scene, cam); return renderer.domElement.toDataURL('image/png'); };
+window.labReady = true; window.shoe = shoe; window.THREE = THREE;
+</script>
