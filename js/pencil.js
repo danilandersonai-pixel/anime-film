@@ -384,7 +384,7 @@
     if (alpha <= 0.004 || prog <= 0.001 || !pts || pts.length < 2) return;
     // линия, уходящая далеко за край кадра, обрезается по краю — иначе карандаш
     // прорисовывает тысячи невидимых точек (пол и стены рядом с камерой)
-    if (PEN.view && !o.clipped && !PEN.noClip) {
+    if (PEN.view && !o.clipped) {
       const vw = PEN.view, M = 20 / PEN.z;
       const x0 = vw[0] - M, y0 = vw[1] - M, x1 = vw[2] + M, y1 = vw[3] + M;
       let out = false;
