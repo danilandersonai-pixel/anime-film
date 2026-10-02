@@ -572,7 +572,7 @@ export function buildShoe({ jersey = null } = {}) {
     return { p: upperPoint(best.s, best.t), n: upperNormal(best.s, best.t) };
   };
   const macro = {
-    knit: { p: upperPoint(0.36, 0.42), n: upperNormal(0.36, 0.42) },
+    knit: { p: upperPoint(0.36, 0.3), n: upperNormal(0.36, 0.3) }, // бок носка: рыжий трикотаж за логотипом, ниже шнуровки
     planet: near(0.27, top(uOfX(0.27)) + 0.36, 1),
     laces: eyelets.map((row) => lerp3(row[0].p, row[1].p, 0.5, 0.03)),
     heel: rim(0, 1),

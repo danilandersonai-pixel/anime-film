@@ -289,7 +289,7 @@ function makeMist() {
 }
 
 // камешки и мокрые листья на асфальте
-function makeDebris() {
+export function makeDebris() {
   const group = new THREE.Group(), r = rng(808);
   const rockGeo = new THREE.IcosahedronGeometry(1, 2);
   const P = rockGeo.attributes.position;
