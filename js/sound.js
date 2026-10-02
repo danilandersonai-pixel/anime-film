@@ -65,22 +65,26 @@
     };
     phrase(PHRASE_A, BARS_A, t, beat, { mel: 0.4, acc: 0.12, warp });
     // чердак: редкие холодные ноты
-    add(22.3, (c, w, o) => musicBox(c, w, o, midi(81) * 0.995, 0.16));
-    add(23.0, (c, w, o) => musicBox(c, w, o, midi(76) * 0.995, 0.12));
+    add(T.s3a + 0.7, (c, w, o) => musicBox(c, w, o, midi(81) * 0.995, 0.16));
+    add(T.s3a + 1.6, (c, w, o) => musicBox(c, w, o, midi(76) * 0.995, 0.12));
+    add(T.s3a + 2.4, (c, w, o) => musicBox(c, w, o, midi(79) * 0.995, 0.1));
     // завод шкатулки: трещотка ускоряется
     for (let i = 0; i < 12; i++) { const u = i / 11; add(T.crack[0] + (T.crack[1] - T.crack[0] - 0.04) * Math.sqrt(u), (c, w, o) => ratchet(c, w, o, 0.32 + u * 0.1)); }
     // ПОВОРОТ
     add(T.TURN, (c, w, o) => turnHit(c, w, o));
     [72, 76, 79, 84, 88, 91].forEach((n, i) => add(T.TURN + i * 0.055, (c, w, o) => musicBox(c, w, o, midi(n), 0.38)));
     // после поворота: полная колыбельная с басом и тёплой подкладкой
+    // четыре фразы ровно до медленного хода к финалу (темп считается от раскадровки)
+    const FINAL = T.still, slowBeat = 0.95;
     const full = { mel: 0.46, acc: 0.15, bass: 0.16, pad: 0.035, octave: true };
-    t = phrase(PHRASE_A, BARS_A, T.TURN + 0.45, beat, full);
-    t = phrase(PHRASE_B, BARS_B, t, beat, Object.assign({}, full, { pad: 0.05 }));
-    t = phrase(PHRASE_A, BARS_A, t, beat, Object.assign({}, full, { mel: 0.4 }));
+    const beat2 = (FINAL - 3 * slowBeat - (T.TURN + 0.45)) / 48;
+    t = phrase(PHRASE_A, BARS_A, T.TURN + 0.45, beat2, full);
+    t = phrase(PHRASE_B, BARS_B, t, beat2, Object.assign({}, full, { pad: 0.05 }));
+    t = phrase(PHRASE_A, BARS_A, t, beat2, Object.assign({}, full, { mel: 0.42 }));
+    t = phrase(PHRASE_B, BARS_B, t, beat2, Object.assign({}, full, { mel: 0.4, pad: 0.05 }));
     // постер: медленный ход к финалу (ми–ре–си), финальный аккорд звенит до конца
-    const FINAL = 54.2, slowBeat = 0.95;
     phrase([[76, 1], [74, 1], [71, 1]], ['G'], FINAL - 3 * slowBeat, slowBeat, { mel: 0.4, acc: 0.12, bass: 0.13, pad: 0.04 });
-    add(FINAL, (c, w, o) => { [48, 60, 64, 67, 72, 76].forEach((n, i) => musicBox(c, w + i * 0.03, o, midi(n), i ? 0.3 : 0.2, 2.6)); pad(c, w, o, [60, 64, 67].map(midi), 0.05, 3.6); bassNote(c, w, o, midi(36), 0.16, 3.6); }, 58);
+    add(FINAL, (c, w, o) => { [48, 60, 64, 67, 72, 76].forEach((n, i) => musicBox(c, w + i * 0.03, o, midi(n), i ? 0.3 : 0.2, 2.6)); pad(c, w, o, [60, 64, 67].map(midi), 0.05, 3.6); bassNote(c, w, o, midi(36), 0.16, 3.6); }, T.END);
 
     // ---- шумы и действия из раскадровки
     const E = S.soundEvents();

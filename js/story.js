@@ -1,86 +1,115 @@
 /* =========================================================================
-   story.js — «Мишка»: персонажи, реквизит и сцены по раскадровке
+   story.js — «Мишка»: декорации, планы и камера
    -------------------------------------------------------------------------
-   Всё считается от времени t: renderFrame(t) всегда даёт один и тот же кадр.
-   Время каждого события — константа в объекте T, звук берёт те же константы.
+   Сцена живёт в 3D (space.js), люди и мишка — в figures.js. Фильм собран
+   из коротких планов с разных ракурсов: общий, крупный, «глазами мишки»,
+   сверху, снизу, через плечо. Всё считается от времени t: renderFrame(t)
+   всегда даёт один и тот же кадр. Время событий — константы в объекте T,
+   звук (sound.js) берёт те же константы.
    ========================================================================= */
 (function (global) {
   'use strict';
-  const P = global.PEN;
-  const { W, H, clamp, lerp, seg, ease, easeOut, easeInOut, back, stroke, guide, hatch, blob, write,
-    ellipsePts, ellipsePoly, arcPts, curve, ik, xf } = P;
+  const P = global.PEN, S = global.SPACE, F = global.FIG;
+  const { W, H, clamp, lerp, seg, easeOut, easeIn, easeInOut, write } = P;
+  const { add, sub, mul, madd, dot, cross, len, norm, lerp3, frame, at } = S;
+  const PI = Math.PI;
 
   // ===== ПАЛИТРА ОДНОЙ СТРОКОЙ: 'paper' | 'notebook' | 'kraft' =====
   const THEME = 'paper';
 
-  const GROUND = 930;   // линия пола
-  const PXCM = 3.0;     // пикселей на сантиметр роста
-  const BS = 0.62;      // масштаб мишки в комнате
-  const CUT = 1.6;      // размер мишки на экране в момент склейки сцен
-  const DOOR_X = 1565;  // где стоят у косяка, когда меряют рост
-
   // ---------------------------------------------------------------------
-  // РАСКАДРОВКА: время каждого события (секунды)
+  // РАСКАДРОВКА: время каждого события (секунды). sNN — начало плана.
   // ---------------------------------------------------------------------
   const T = {
-    END: 58,
-    // 0. Титул
-    bearDraw: [-0.9, 1.9], fur0: [1.4, 2.6], title: [1.9, 2.9], sub: [2.7, 3.6], titleOut: [3.6, 4.2],
+    END: 64,
+    // 0. Титул: мишка рисуется на пустой бумаге
+    bearDraw: [-0.9, 1.8], fur0: [1.2, 2.4], title: [1.8, 2.8], sub: [2.6, 3.5], titleOut: [3.9, 4.6],
     // 1. 1956 — Аня
-    pull1: [3.8, 5.6], floor1: [4.0, 5.2], tree: [4.2, 5.8], window1: [4.6, 5.9], door1: [5.0, 5.9],
-    year1: 5.4, anyaIn: [5.8, 6.6], anyaWalk: [6.6, 7.3], reach1: [7.1, 7.4], hug1: [7.4, 8.0], name1: 7.8,
-    treeOut: [8.2, 8.7], walkDoor1: [8.2, 8.8], grow1: [8.8, 12.0], button: [10.0, 10.4], exit1: [12.0, 13.4],
+    s1a: 5.0, room1: [4.4, 6.2], year1: 5.6, anyaIn: [5.6, 6.2], run1: [5.8, 7.6],
+    s1b: 7.6, crouch1: [7.7, 8.4], reach1: [8.1, 8.7], lift1: [8.8, 9.6],
+    s1c: 9.6, name1: 9.9, spin1: [9.9, 11.0],
+    s1d: 11.2, grow1: [11.5, 14.6], button: [12.8, 13.2],
     // 2. 1979 — Лена
-    s2: 13.4, pull2: [13.4, 14.8], room2: [13.6, 14.9], lenaIn: [13.8, 14.8], year2: 14.2, label2: 14.6,
-    give2: [15.0, 15.8], name2: 15.6, zoomIn2: [15.9, 16.3], patch: [16.2, 16.9], zoomOut2: [16.9, 17.3],
-    anyaOut2: [17.0, 17.5], walkDoor2: [17.2, 17.7], grow2: [17.7, 19.3], box2: [19.3, 19.7],
-    intoBox: [19.7, 20.2], lidClose: [20.2, 20.45], exit2: [20.3, 21.0],
-    // 3. Чердак, поворот
-    s3: 21.0, pull3: [21.0, 22.0], attic: [21.0, 22.2], years3: [21.6, 23.6], crack: [23.4, 24.0],
-    TURN: 24.0, rise: [24.0, 24.6],
+    s2a: 15.4, year2: 15.6, give2: [16.0, 16.9], name2: 16.6,
+    s2b: 17.2, patch: [17.6, 18.8],
+    s2c: 19.0, grow2: [19.2, 21.2],
+    s2d: 21.4, place2: [21.5, 22.3], lidClose: [22.5, 23.7],
+    // 3. Чердак и поворот
+    s3a: 24.0, years3: [24.6, 26.6],
+    s3b: 26.8, crack: [27.0, 27.6], TURN: 27.6, open3: [27.6, 27.95], kat3: [27.7, 28.3], reach3: [28.1, 28.6],
     // 4. 2003 — Катя
-    s4: 24.6, pull4: [24.6, 26.0], room4: [24.8, 26.0], year4: 25.0, puff: [24.8, 25.8], hug4: [26.0, 26.6],
-    name4: 26.4, granIn: [26.6, 27.4], label4: 27.2, scarf: [27.6, 29.0], granOut: [29.4, 29.9],
-    walkDoor4: [29.4, 30.2], grow4: [30.2, 33.6], exit4: [34.4, 36.0],
+    s4a: 28.6, year4: 28.9, spin4: [28.8, 31.0], puff: [28.9, 29.9], name4: 29.6,
+    s4b: 31.0, granIn: [31.0, 31.7], label4: 31.5, scarf: [31.8, 33.6],
+    s4c: 34.2, grow4: [34.4, 37.8],
+    s4d: 38.2,
     // 5. 2026 — Соня
-    s5: 36.0, pull5: [36.0, 37.6], room5: [36.2, 37.4], soniaIn: [36.4, 37.4], family5: [36.6, 38.0],
-    year5: 37.0, labels5: 37.8, give5: [38.2, 39.0], name5: 39.0, warm: [39.0, 41.0], clip: [41.4, 42.4],
-    push5: [42.4, 45.4], erase5: [45.0, 46.4], toPoster: [46.4, 48.4],
+    s5a: 39.4, room5: [39.4, 40.4], year5: 40.0, toddle: [40.2, 42.3], labels5: 40.8,
+    s5b: 42.4, give5: [43.1, 44.3],
+    s5c: 44.6, name5: 44.9, warm: [44.6, 46.6],
+    s5d: 47.0, clip: [47.35, 48.2],
+    s5e: 49.0, erase5: [50.4, 52.0],
     // 6. Постер
-    s6: 48.4, notes: [48.8, 49.8, 50.8, 51.8], title6: [52.0, 53.0], years6: [52.7, 53.5],
-    names6: [53.3, 54.1], moral: [54.0, 55.0], still: 55.0,
+    s6: 53.0, orbit6: [53.0, 56.0], notes: [56.0, 56.9, 57.8, 58.7], title6: [59.0, 59.9], years6: [59.6, 60.3],
+    names6: [60.0, 60.7], moral: [60.2, 61.0], still: 61.0,
   };
+  // клапаны коробки закрываются по одному: левый, правый, задний, передний
+  const FLAPS2 = { l: [22.5, 22.85], r: [22.75, 23.1], b: [23.0, 23.4], f: [23.3, 23.7] };
 
   // ---------------------------------------------------------------------
   // Семья
   // ---------------------------------------------------------------------
   const SPEC = {
-    anya: { hairKid: 'pigtails', hairAdult: 'bun', hairColor: 'hairDark', dress: 'a1', pattern: 'dots', hk: 1.0 },
-    anya52: { hairKid: 'bun', hairAdult: 'bun', hairColor: 'hairBrown', dress: 'a1', pattern: 'cardigan', glasses: true, long: true, hk: 1.0 },
-    anya75: { hairKid: 'bun', hairAdult: 'bun', hairColor: 'hairGray', dress: 'a1', pattern: 'cardigan', glasses: true, long: true, old: true },
-    lena: { hairKid: 'bob', hairAdult: 'bob', hairColor: 'hairBrown', dress: 'a2', pattern: 'stripes', hk: 1.035 },
-    lena51: { hairKid: 'bob', hairAdult: 'bob', hairColor: 'hairBrown', dress: 'a2', pattern: 'cardigan', long: true, hk: 1.035 },
-    katya: { hairKid: 'ponytail', hairAdult: 'ponytail', hairColor: 'hairGinger', dress: 'fur', pattern: 'zigzag', hk: 0.975 },
-    sonia: { hairKid: 'sprout', hairAdult: 'sprout', hairColor: 'hairFair', dress: 'warm', pattern: 'collar' },
+    anya: { hairKid: 'pigtails', hairAdult: 'bun', hairColor: 'hairDark', dress: 'a1', pattern: 'dots', eyes: 'hairBrown' },
+    anya52: { hairKid: 'bun', hairAdult: 'bun', hairColor: 'hairBrown', dress: 'a1', pattern: 'cardigan', glasses: true, long: true, eyes: 'hairBrown' },
+    anya75: { hairKid: 'bun', hairAdult: 'bun', hairColor: 'hairGray', dress: 'a1', pattern: 'cardigan', glasses: true, long: true, old: true, eyes: 'hairBrown' },
+    lena: { hairKid: 'bob', hairAdult: 'bob', hairColor: 'hairBrown', dress: 'a2', pattern: 'stripes', eyes: 'a1', hk: 1.03 },
+    lena51: { hairKid: 'bob', hairAdult: 'bob', hairColor: 'hairBrown', dress: 'a2', pattern: 'collar', long: true, eyes: 'a1', hk: 1.03 },
+    katya: { hairKid: 'ponytail', hairAdult: 'ponytail', hairColor: 'hairGinger', dress: 'shadow', pattern: 'zigzag', eyes: 'a2', hk: 0.98 },
+    sonia: { hairKid: 'sprout', hairAdult: 'sprout', hairColor: 'hairFair', dress: 'warm', pattern: 'collar', eyes: 'a1' },
   };
-  // отметки роста на косяке: у каждого поколения свой карандаш
+  // рост у дверного косяка: у каждого поколения свой карандаш
   const GENS = {
-    anya: { name: 'Аня', born: 1951, color: 'line', ages: [5, 8, 11, 13, 20], from: 5, to: 20, grow: T.grow1, spec: SPEC.anya, nameX: 1336 },
-    lena: { name: 'Лена', born: 1975, color: 'a1', ages: [4, 7, 10, 13, 17], from: 4, to: 17, grow: T.grow2, spec: SPEC.lena, nameX: 1246 },
-    katya: { name: 'Катя', born: 1996, color: 'a2', ages: [7, 9, 11, 13, 25], from: 7, to: 25, grow: T.grow4, spec: SPEC.katya, nameX: 1156 },
+    anya: { key: 'anya', name: 'Аня', born: 1951, color: 'line', ages: [5, 8, 11, 14, 20], from: 5, to: 20, grow: T.grow1, spec: SPEC.anya },
+    lena: { key: 'lena', name: 'Лена', born: 1975, color: 'a1', ages: [4, 7, 10, 13, 17], from: 4, to: 17, grow: T.grow2, spec: SPEC.lena },
+    katya: { key: 'katya', name: 'Катя', born: 1996, color: 'a2', ages: [7, 9, 12, 15, 25], from: 7, to: 25, grow: T.grow4, spec: SPEC.katya },
   };
+
+  // ---------------------------------------------------------------------
+  // Место действия (сантиметры): комната, окно, дверь с косяком, ёлка
+  // ---------------------------------------------------------------------
+  const ROOM = { x0: -320, x1: 320, z0: -380, z1: 280, h: 280 };
+  const WIN = { x0: -60, x1: 90, y0: 95, y1: 225 };
+  const DOOR = { z0: -230, z1: -140, h: 205, c: 10 };
+  const KIDZ = -106;                    // где стоят, когда меряют рост
+  const TREE = [-215, 0, -290];
+  const BS = 0.72;                      // мишка в масштабе комнаты (≈ 36 см)
+  const BEAR0 = [-165, 0, -205], BYAW = 1.0;
+  const ANYA1 = [BEAR0[0] + Math.sin(BYAW) * 52, BEAR0[2] + Math.cos(BYAW) * 52];
+  const DOORP = [348, -185];
+  const A2 = [-60, -170], Y2 = 0.35;    // 1979: Аня отдаёт мишку Лене
+  const L2 = [A2[0] + Math.sin(Y2) * 72, A2[1] + Math.cos(Y2) * 72];
+  const TABLE = { c: [-185, -262], w: 110, d: 68, h: 72, yaw: 0.25 };
+  const BOX2 = [-30, -235];
+  const BOXA = [0, -40], BOXA_YAW = 0.15;
+  const KAT4 = [10, 75];
+  const G4 = [-110, -195], STOOL = [-38, -168];
+  const A5 = [-150, -190], Y5 = 0.6;    // 2026: прабабушка Аня и Соня
+  const S5 = [A5[0] + Math.sin(Y5) * 62, A5[1] + Math.cos(Y5) * 62];
+  const SON0 = [40, -55];
+  const BF5 = [S5[0] - Math.sin(Y5) * 30, S5[1] - Math.cos(Y5) * 30];
+  const BGD = 1e7;                      // фон рисуется раньше всего
+
+  const ERA = {
+    1956: { id: 'A', wall: 'wallA', light: [15, 185, -330], reach: 720, sky: 'a1:lt', frost: true },
+    1979: { id: 'B', wall: 'wallB', light: [-245, 168, 25], reach: 640, sky: 'a1:sh', carpet: true, stripes: true, lamp: [-245, 0, 25] },
+    2003: { id: 'C', wall: 'wallC', light: [15, 185, -330], reach: 820, sky: 'a1:lt', sun: true, curtain: 'a1' },
+    2026: { id: 'D', wall: 'wallD', light: [15, 185, -330], reach: 860, sky: 'a1:lt', sun: true, curtain: 'a2' },
+  };
+  function useLight(pos) { S.LIGHT.pos = pos; S.LIGHT.dir = null; }
 
   // ---------------------------------------------------------------------
   // Помощники
   // ---------------------------------------------------------------------
-  function tab(arr, x) {
-    if (x <= arr[0][0]) return arr[0][1];
-    for (let i = 1; i < arr.length; i++) if (x <= arr[i][0]) {
-      const [x0, y0] = arr[i - 1], [x1, y1] = arr[i];
-      return lerp(y0, y1, (x - x0) / (x1 - x0));
-    }
-    return arr[arr.length - 1][1];
-  }
   function plural(n, one, few, many) {
     const n10 = n % 10, n100 = n % 100;
     if (n10 === 1 && n100 !== 11) return one;
@@ -88,1471 +117,1115 @@
     return many;
   }
   const ageText = (n) => `${n} ${plural(n, 'год', 'года', 'лет')}`;
-
   const GHOST = 0.08;
   // ластик: 1 → бледный призрак линий → 0
   function erase(t, a, b) {
     if (t <= a) return 1;
-    if (t <= b) return lerp(1, GHOST, ease(seg(t, a, b)));
-    return GHOST * (1 - seg(t, b, b + 1.2));
+    if (t <= b) return lerp(1, GHOST, easeInOut(seg(t, a, b)));
+    return GHOST * (1 - seg(t, b, b + 1.0));
   }
-  function signedArea(p) { let s = 0; for (let i = 0; i < p.length; i++) { const a = p[i], b = p[(i + 1) % p.length]; s += a[0] * b[1] - b[0] * a[1]; } return s / 2; }
-  // «стираем» то, что нарисовано позади объекта (объект не прозрачный)
-  function knock(ctx, polys, a) {
-    if (a <= 0.004) return;
-    for (const c of P.layers) knockOne(c, polys, a);
-  }
-  function knockOne(ctx, polys, a) {
-    ctx.save();
-    ctx.globalCompositeOperation = 'destination-out';
-    ctx.fillStyle = `rgba(0,0,0,${clamp(a)})`;
-    ctx.beginPath();
-    for (let p of polys) {
-      if (!p || p.length < 3) continue;
-      if (signedArea(p) < 0) p = p.slice().reverse();
-      ctx.moveTo(p[0][0], p[0][1]);
-      for (let i = 1; i < p.length; i++) ctx.lineTo(p[i][0], p[i][1]);
-      ctx.closePath();
-    }
-    ctx.fill('nonzero');
-    ctx.restore();
-  }
-  // контур «рукава»/«ноги» вокруг ломаной
-  function limbPoly(pts, w0, w1) {
-    const n = pts.length, L = [], Rr = [];
-    for (let i = 0; i < n; i++) {
-      const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)];
-      let tx = b[0] - a[0], ty = b[1] - a[1];
-      const tl = Math.hypot(tx, ty) || 1; tx /= tl; ty /= tl;
-      const w = lerp(w0, w1, i / (n - 1));
-      L.push([pts[i][0] - ty * w, pts[i][1] + tx * w]);
-      Rr.push([pts[i][0] + ty * w, pts[i][1] - tx * w]);
-    }
-    return L.concat(Rr.reverse());
-  }
-  const CAM0 = { x: W / 2, y: H / 2, z: 1 };
-  function camLerp(a, b, k) {
-    return { x: lerp(a.x, b.x, k), y: lerp(a.y, b.y, k), z: Math.exp(lerp(Math.log(a.z), Math.log(b.z), k)) };
-  }
-  const focus = (c, s, scr = CUT) => ({ x: c[0], y: c[1], z: scr / s });
-  const add = (a, b) => [a[0] + b[0], a[1] + b[1]];
-  const lerp2 = (a, b, k) => [lerp(a[0], b[0], k), lerp(a[1], b[1], k)];
-  // перелёт по дуге
-  const arc2 = (a, b, k, hgt) => { const p = lerp2(a, b, k); p[1] -= Math.sin(k * Math.PI) * hgt; return p; };
-
-  // время, когда при росте исполнится age (для отметок и звука)
+  function lerpAng(a, b, k) { let d = b - a; while (d > PI) d -= 2 * PI; while (d < -PI) d += 2 * PI; return a + d * k; }
+  const flat = (p, y = 0) => [p[0], y, p[1]];
   function growAge(g, t) { return lerp(g.from, g.to, easeInOut(seg(t, g.grow[0], g.grow[1]))); }
-  function ageCrossTime(g, age) {
+  // когда при росте исполнится age (для отметок и звука)
+  function ageCross(g, age) {
     let a = g.grow[0], b = g.grow[1];
     if (age <= g.from) return a;
     for (let i = 0; i < 40; i++) { const m = (a + b) / 2; if (growAge(g, m) < age) a = m; else b = m; }
     return (a + b) / 2;
   }
+  // следы поколений на мишке
+  function marksAt(t) {
+    return { button: seg(t, T.button[0], T.button[1]), patch: seg(t, T.patch[0], T.patch[1]), scarf: seg(t, T.scarf[0], T.scarf[1]), clip: seg(t, T.clip[1] - 0.12, T.clip[1]) };
+  }
+  function bear(t, o) { return F.bear(Object.assign({ key: 'bear', s: BS, marks: marksAt(t), shadow: o.ground !== undefined }, o)); }
+
+  // ---------------------------------------------------------------------
+  // Камера
+  // ---------------------------------------------------------------------
+  function cam(c) { S.setCamera(Object.assign({ near: 2 }, c)); }
+  function camMix(a, b, k) {
+    return { pos: lerp3(a.pos, b.pos, k), target: lerp3(a.target, b.target, k), fov: lerp(a.fov || 40, b.fov || 40, k), roll: lerp(a.roll || 0, b.roll || 0, k) };
+  }
+  // облёт: угол a вокруг вертикали через точку c
+  function orbit(c, a, r, y, extra) { return Object.assign({ pos: [c[0] + Math.sin(a) * r, y, c[2] + Math.cos(a) * r], target: c }, extra); }
+  // камера «с рук»: лёгкое покачивание (меняется вместе с рисунком 12 раз в секунду)
+  function sway(c, t, s = 1) {
+    return Object.assign({}, c, { pos: add(c.pos, [Math.sin(t * 0.83) * 2.2 * s, Math.sin(t * 1.21 + 1) * 1.4 * s, Math.sin(t * 0.67 + 2) * 1.8 * s]) });
+  }
+
+  // ---------------------------------------------------------------------
+  // Как держат мишку. hug — спиной к груди, hugIn — лицом к груди,
+  // give — протягивают, front — перед лицом, up — над головой, side — под мышкой
+  // ---------------------------------------------------------------------
+  function hold(g, mode) {
+    const Tf = g.T, Hc = g.Hc, bs = BS, up = Tf.u;
+    const yaw = (g.st.yaw || 0) + (g.st.twist || 0);
+    const pair = (pos, dx, dy, dz) => [madd(madd(madd(pos, Tf.r, -dx * bs), up, dy * bs), Tf.f, dz * bs), madd(madd(madd(pos, Tf.r, dx * bs), up, dy * bs), Tf.f, dz * bs)];
+    let pos, fr, hands;
+    switch (mode) {
+      case 'hugIn':
+        pos = madd(madd(g.chest, Tf.f, Hc * 0.13), up, -Hc * 0.2);
+        fr = frame(yaw + PI, 0.05);
+        hands = pair(pos, 12, 20, 8);
+        break;
+      case 'give':
+        pos = madd(madd(g.chest, Tf.f, Hc * 0.24), up, -Hc * 0.13);
+        fr = frame(yaw);
+        hands = pair(pos, 13, 21, 0);
+        break;
+      case 'front':
+        pos = madd(madd(g.neckTop, Tf.f, Hc * 0.3), [0, 1, 0], -27 * bs);
+        fr = frame(yaw + PI, -0.12);
+        hands = pair(pos, 13.5, 21, 0);
+        break;
+      case 'up':
+        pos = madd(madd(g.neckTop, [0, 1, 0], g.hh * 0.95), Tf.f, Hc * 0.06);
+        fr = frame(yaw + PI, 0.35);
+        hands = pair(pos, 13.5, 19, 0);
+        break;
+      case 'side':
+        pos = madd(madd(madd(g.pelvis, Tf.r, g.shW * 1.2), Tf.f, Hc * 0.05), up, -Hc * 0.03);
+        fr = frame(yaw + 0.25);
+        hands = [null, madd(madd(pos, up, 15 * bs), Tf.f, 9 * bs)];
+        break;
+      default: // hug
+        pos = madd(madd(g.chest, Tf.f, Hc * 0.11), up, -Hc * 0.2);
+        fr = frame(yaw, 0.1);
+        hands = pair(pos, 11, 16, 9);
+    }
+    return { pos, fr, hands };
+  }
+  // человек с мишкой в руках
+  function withBear(t, spec, st, mode, bo = {}) {
+    const g0 = F.rig(spec, st);
+    const h = hold(g0, mode);
+    st.hands = h.hands; st.armsFront = mode !== 'side'; st.curl = 0.8;
+    F.human(spec, st);
+    const b = bear(t, Object.assign({ pos: h.pos, fr: h.fr, alpha: st.alpha }, bo));
+    return { g: g0, h, b };
+  }
+  // передача мишки: A протягивает, B берёт и прижимает к себе
+  function give(tg, t, A, B) {
+    const k = easeInOut(seg(t, tg[0], tg[1]));
+    const gA0 = F.rig(A.spec, A.st), gB0 = F.rig(B.spec, B.st);
+    const hA = hold(gA0, 'give'), hB = hold(gB0, 'hugIn');
+    const pos = add(lerp3(hA.pos, hB.pos, k), [0, Math.sin(k * PI) * 7, 0]);
+    const fr = frame(A.st.yaw, lerp(0, 0.05, k)); // мишка всё время лицом к ребёнку
+    const sidesA = [at(pos, fr, -13 * BS, 21 * BS, 0), at(pos, fr, 13 * BS, 21 * BS, 0)];
+    const rel = easeInOut(seg(k, 0.72, 1));
+    A.st.hands = [0, 1].map((i) => lerp3(sidesA[i], gA0.arms[i].wrist, rel));
+    A.st.armsFront = true; A.st.curl = 0.75;
+    const grab = easeInOut(seg(t, tg[0] - 0.25, tg[0] + 0.45));
+    const backB = [at(pos, fr, 12 * BS, 20 * BS, -7 * BS), at(pos, fr, -12 * BS, 20 * BS, -7 * BS)];
+    B.st.hands = [0, 1].map((i) => lerp3(gB0.arms[i].wrist, backB[i], grab));
+    B.st.armsFront = true; B.st.curl = 0.8;
+    return { pos, fr, k, gA: gA0, gB: gB0, center: at(pos, fr, 0, 22 * BS, 0) };
+  }
 
   // =====================================================================
-  // МИШКА
+  // ДЕКОРАЦИИ
   // =====================================================================
-  const BG = {
-    legL: [-37, -24, 30, 23, 0.3], legR: [37, -24, 30, 23, -0.3],
-    padL: [-45, -20, 13, 10, 0.3], padR: [45, -20, 13, 10, -0.3],
-    body: [0, -80, 57, 63, 0], belly: [0, -72, 32, 37, 0],
-    armL: [-53, -95, 17, 37, 0.5], armR: [53, -95, 17, 37, -0.5],
-    head: [0, -163, 55, 48, 0],
-    earL: [-41, -201, 19, 18, -0.2], earR: [41, -201, 19, 18, 0.2],
-    earInL: [-41, -199, 9, 8, -0.2], earInR: [41, -199, 9, 8, 0.2],
-    muzzle: [0, -146, 24, 17, 0], nose: [0, -153, 8, 5.5, 0],
-    eyeL: [-21, -172], eyeR: [21, -172], ear: [44, -214],
-  };
-  const BEAR_CY = -110;
-  const PATCH = [36, -30]; // заплатка на правой лапке
-  const bearCenter = (x, y, s) => [x, y + BEAR_CY * s];
-
-  function bearM(o) { return xf(o.x, o.y, o.s, o.rot || 0); }
-  function bearPart(M, e) {
-    const c = M(e[0], e[1]);
-    return { c, rx: e[2] * M.s, ry: e[3] * M.s, rot: e[4] + M.rot };
-  }
-  function bearSilhouette(M) {
-    return ['legL', 'legR', 'body', 'armL', 'armR', 'head', 'earL', 'earR'].map((k) => {
-      const p = bearPart(M, BG[k]); return ellipsePoly(p.c[0], p.c[1], p.rx * 1.04, p.ry * 1.04, p.rot, 28);
-    });
-  }
-  function scarfGeo(M) {
-    const band = [[-54, -122], [-36, -110], [-14, -103], [0, -102], [14, -103], [36, -110], [54, -122],
-      [52, -136], [34, -125], [14, -119], [0, -118], [-14, -119], [-34, -125], [-52, -136]];
-    const tail = [[12, -112], [30, -116], [40, -64], [20, -60]];
-    return { band: M.pts(curve(band, true, 4)), tail: M.pts(tail), fr: [[21, -60], [27, -61], [33, -62], [39, -63]].map((p) => [M(p[0], p[1]), M(p[0] - 1, p[1] + 10)]) };
-  }
-  function heartPts(cx, cy, size, rot = 0) {
-    const out = [];
-    for (let i = 0; i < 28; i++) {
-      const a = (i / 28) * Math.PI * 2;
-      const x = 16 * Math.pow(Math.sin(a), 3);
-      const y = -(13 * Math.cos(a) - 5 * Math.cos(2 * a) - 2 * Math.cos(3 * a) - Math.cos(4 * a));
-      const c = Math.cos(rot), s = Math.sin(rot);
-      const px = x / 16 * size, py = y / 16 * size;
-      out.push([cx + px * c - py * s, cy + px * s + py * c]);
-    }
-    return out;
-  }
-  function drawHeart(ctx, cx, cy, size, key, al, p = 1, rot = 0.3) {
-    if (al <= 0.004 || p <= 0) return;
-    const pts = heartPts(cx, cy, size, rot);
-    P.volume(P.polyShape(pts, { round: 0.85, vy: (f) => lerp(-0.5, 0.4, f) }), { key: key + ':v', color: 'warm', alpha: al * p, w: 0.45, shine: 1.2 });
-    stroke(ctx, pts, { key: key + ':o', closed: true, color: 'warm:dk', w: 2, alpha: al, p, amp: 0.6, gaps: false });
-  }
-
-  // пушистый край: короткие штрихи мелка наружу
-  function tufts(cx, cy, rx, ry, rot, key, al, role = 'fur:sh') {
-    if (al <= 0.004) return;
-    const z = P.z, ctx = P.L.color, r = P.boilRng(key);
-    const N = Math.max(8, Math.round((rx + ry) * 1.7 * z / 10));
-    const c = Math.cos(rot), s = Math.sin(rot);
-    ctx.lineCap = 'round';
-    ctx.lineWidth = 2.6 / z;
-    ctx.strokeStyle = P.col(role, 0.6 * al);
-    ctx.beginPath();
-    for (let i = 0; i < N; i++) {
-      const a = (i / N) * Math.PI * 2 + r() * 0.25;
-      const ex = Math.cos(a) * rx, ey = Math.sin(a) * ry;
-      const px = cx + ex * c - ey * s, py = cy + ex * s + ey * c;
-      const nx = Math.cos(a) * c - Math.sin(a) * s, ny = Math.cos(a) * s + Math.sin(a) * c;
-      const len = (4 + r() * 6) / z, tw = (r() - 0.5) * 0.8;
-      ctx.moveTo(px - nx * len * 0.6, py - ny * len * 0.6);
-      ctx.lineTo(px + (nx * Math.cos(tw) - ny * Math.sin(tw)) * len, py + (nx * Math.sin(tw) + ny * Math.cos(tw)) * len);
-    }
-    ctx.stroke();
-  }
-
-  function drawBear(ctx, o) {
-    const al = o.alpha === undefined ? 1 : o.alpha;
-    if (al <= 0.004) return;
-    const M = bearM(o), k = o.key || 'bear', d = o.draw === undefined ? 1 : o.draw;
-    const fur = o.fur === undefined ? 1 : o.fur;
-    const m = o.marks || {};
-    const w = o.w || 2.6;
-    const pp = (a, b) => seg(d, a, b);
-    const L = P.L;
-    // строительные линии
-    const build = o.build === undefined ? (1 - seg(d, 0.6, 1)) * clamp(d * 6) : o.build;
-    if (build > 0.01) {
-      const hd = bearPart(M, BG.head), bd = bearPart(M, BG.body);
-      guide(ctx, ellipsePts(hd.c[0], hd.c[1], hd.rx * 1.02, hd.rx * 1.02, 0, k + 'g1'), { key: k + ':g1', closed: true, alpha: build * al });
-      guide(ctx, ellipsePts(bd.c[0], bd.c[1], bd.rx * 1.05, bd.ry * 1.02, 0, k + 'g2'), { key: k + ':g2', closed: true, alpha: build * al });
-      guide(ctx, [M(0, -222), M(0, 6)], { key: k + ':g3', alpha: build * al * 0.8 });
-      guide(ctx, [M(-70, -172), M(70, -172)], { key: k + ':g4', alpha: build * al * 0.7 });
-      guide(ctx, [M(-90, 0), M(90, 0)], { key: k + ':g5', alpha: build * al * 0.7 });
-    }
-    // тень на полу
-    if (o.ground !== undefined) P.castShadow(M(0, 0)[0], o.ground, 80 * M.s, 15 * M.s, { key: k + ':cast', alpha: al * clamp(d * 2) * fur * (o.shadowA === undefined ? 1 : o.shadowA), h: 110 * M.s });
-    const shp = (name, sc = 0.98, flat = 1) => { const e = bearPart(M, BG[name]); return P.ellShape(e.c[0], e.c[1], e.rx * sc, e.ry * sc, e.rot, flat); };
-    const outline = (name, p, extra = {}) => {
-      const e = bearPart(M, BG[name]);
-      stroke(ctx, ellipsePts(e.c[0], e.c[1], e.rx, e.ry, e.rot, k + name), Object.assign({ key: k + ':' + name, closed: true, w, p, alpha: al }, extra));
-      return e;
-    };
-    const polyOf = (name, sc = 1) => { const e = bearPart(M, BG[name]); return ellipsePoly(e.c[0], e.c[1], e.rx * sc, e.ry * sc, e.rot, 30); };
-    const kn = (name, p) => knock(ctx, [polyOf(name, 1.03)], al * clamp(p * 4));
-    const vol = (name, role, p, extra = {}) => P.volume(shp(name, 0.99, extra.flat || 1), Object.assign({ key: k + ':v:' + name, color: role, alpha: al, p: p * fur }, extra));
-    const fluff = (name, p) => { const e = bearPart(M, BG[name]); tufts(e.c[0], e.c[1], e.rx, e.ry, e.rot, k + ':tf:' + name, al * p * fur); };
-
-    // уши (за головой)
-    const pE = pp(0.12, 0.3);
-    for (const s of ['L', 'R']) {
-      vol('ear' + s, 'fur', pE, { w: 0.6 });
-      vol('earIn' + s, 'cream:sh', pE, { w: 0.4, noCore: true, noLight: true });
-      fluff('ear' + s, pE);
-      outline('ear' + s, pE);
-      outline('earIn' + s, pE, { w: w * 0.7 });
-    }
-    // туловище
-    const pB = pp(0.38, 0.6);
-    kn('body', pB);
-    vol('body', 'fur', pB);
-    // тень от головы на груди
-    const hd = bearPart(M, BG.head);
-    const hs = P.ellShape(hd.c[0] + 4 * M.s, hd.c[1] + 30 * M.s, hd.rx * 0.92, hd.ry * 0.72);
-    P.crayon(L.color, shp('body'), { key: k + ':hsh', color: 'fur:sh', alpha: 0.5 * al * pB * fur, w: 7, gap: 5.5, angle: -0.3, cond: (n, x, y) => hs.test(x, y) !== null });
-    fluff('body', pB);
-    outline('body', pB);
-    knock(ctx, [polyOf('belly', 0.98)], al * clamp(pp(0.52, 0.64) * 3) * fur);
-    vol('belly', 'cream', pp(0.52, 0.64), { w: 0.75, flat: 0.7, shadowAt: 0.22 });
-    outline('belly', pp(0.52, 0.64), { w: w * 0.7 });
-    // лапы (ноги)
-    const pL = pp(0.72, 0.92);
-    for (const s of ['L', 'R']) {
-      kn('leg' + s, pL);
-      vol('leg' + s, 'fur', pL, { w: 0.75 });
-      fluff('leg' + s, pL);
-      outline('leg' + s, pL);
-      const pPad = pp(0.86, 1);
-      knock(ctx, [polyOf('pad' + s, 1)], al * pPad * fur);
-      vol('pad' + s, 'cream', pPad, { w: 0.45, flat: 0.6, noCore: true });
-      outline('pad' + s, pPad, { w: w * 0.7 });
-    }
-    // заплатка (Лена, 1979)
-    if (m.patch > 0) {
-      const pc = M(PATCH[0], PATCH[1]), r = M.rot - 0.25, hw = 15 * M.s, hh = 13 * M.s;
-      const c = Math.cos(r), s = Math.sin(r);
-      const q = [[-hw, -hh], [hw, -hh * 0.9], [hw * 1.05, hh], [-hw * 0.95, hh * 1.05]].map(([x, y]) => [pc[0] + x * c - y * s, pc[1] + x * s + y * c]);
-      const pO = seg(m.patch, 0, 0.45), pH = seg(m.patch, 0.3, 0.7), pS = seg(m.patch, 0.6, 1);
-      knock(ctx, [q], al * clamp(pO * 3));
-      P.volume(P.polyShape(q, { round: 0.55 }), { key: k + ':patchV', color: 'a2', alpha: al, p: pH, w: 0.45 });
-      // клетка на ткани
-      for (let i = 1; i < 3; i++) {
-        stroke(ctx, [lerp2(q[0], q[1], i / 3), lerp2(q[3], q[2], i / 3)], { key: k + ':pc' + i, color: 'a2:dk', w: 1.4, alpha: al * pH, sketch: false, gaps: false });
-        stroke(ctx, [lerp2(q[0], q[3], i / 3), lerp2(q[1], q[2], i / 3)], { key: k + ':pr' + i, color: 'a2:dk', w: 1.4, alpha: al * pH, sketch: false, gaps: false });
-      }
-      stroke(ctx, q, { key: k + ':patch', closed: true, color: 'a2:dk', w: 2.4, alpha: al, p: pO, amp: 0.8 });
-      const ns = 12;
-      for (let i = 0; i < ns; i++) {
-        if (i / ns > pS) break;
-        const e0 = q[Math.floor(i / 3)], e1 = q[(Math.floor(i / 3) + 1) % 4], u = ((i % 3) + 0.5) / 3;
-        const px = lerp(e0[0], e1[0], u), py = lerp(e0[1], e1[1], u);
-        const ex = e1[0] - e0[0], ey = e1[1] - e0[1], el = Math.hypot(ex, ey) || 1;
-        const nx = -ey / el * 5 * M.s, ny = ex / el * 5 * M.s;
-        stroke(ctx, [[px - nx, py - ny], [px + nx, py + ny]], { key: k + ':st' + i, w: 1.8, alpha: al, sketch: false, gaps: false, amp: 0.4 });
-      }
-    }
-    // руки (передние лапы)
-    const pA = pp(0.58, 0.78);
-    for (const s of ['L', 'R']) {
-      kn('arm' + s, pA);
-      vol('arm' + s, 'fur', pA, { w: 0.7 });
-      fluff('arm' + s, pA);
-      outline('arm' + s, pA);
-    }
-    // голова
-    const pHd = pp(0, 0.22);
-    kn('head', pHd);
-    vol('head', 'fur', pHd);
-    fluff('head', pHd);
-    outline('head', pHd);
-    // мордочка
-    const pM = pp(0.22, 0.36);
-    knock(ctx, [polyOf('muzzle', 1)], al * clamp(pM * 3) * fur);
-    vol('muzzle', 'cream', pM, { w: 0.55, flat: 0.8, noCore: true });
-    outline('muzzle', pM, { w: w * 0.8 });
-    const pF = pp(0.3, 0.42);
-    const shine = (c, r) => { const lc = P.L.light; lc.fillStyle = P.col('light', 0.9 * al); lc.beginPath(); lc.arc(c[0] - r * 0.35, c[1] - r * 0.38, Math.max(1.2 / P.z, r * 0.3), 0, 6.283); lc.fill(); };
-    if (pF > 0) {
-      const n = bearPart(M, BG.nose);
-      blob(ctx, n.c[0], n.c[1], n.rx, n.ry, { key: k + ':nose', alpha: al * clamp(pF * 2) });
-      shine(n.c, n.rx * 0.8);
-      stroke(ctx, curve([M(0, -147), M(0, -141), M(-8, -135)], false, 5), { key: k + ':m1', w: w * 0.75, alpha: al, p: pF, sketch: false });
-      stroke(ctx, curve([M(0, -141), M(8, -135)], false, 4), { key: k + ':m2', w: w * 0.75, alpha: al, p: pF, sketch: false });
-      for (let i = 0; i < 3; i++) stroke(ctx, [M(-3, -206 + i * 7), M(3, -204 + i * 7)], { key: k + ':seam' + i, w: 1.3, alpha: al * 0.6 * pF, sketch: false });
-    }
-    // глаза-пуговицы
-    const pEy = pp(0.34, 0.46);
-    const btn = m.button || 0;
-    const eyeAt = (side) => M(BG['eye' + side][0], BG['eye' + side][1]);
-    const holes = (c, r, n, role = 'paper') => {
-      ctx.fillStyle = P.col(role, 0.85 * al);
-      for (let i = 0; i < n; i++) {
-        const a = (i / n) * Math.PI * 2 + 0.6;
-        ctx.beginPath(); ctx.arc(c[0] + Math.cos(a) * r, c[1] + Math.sin(a) * r, Math.max(0.9 / P.z, r * 0.42), 0, 6.283); ctx.fill();
-      }
-    };
-    if (pEy > 0) {
-      const er = 6.5 * M.s;
-      const eR = eyeAt('R');
-      blob(ctx, eR[0], eR[1], er, er * 1.05, { key: k + ':eyeR', alpha: al * pEy });
-      holes(eR, er * 0.38, 2);
-      shine(eR, er);
-      const eL = eyeAt('L');
-      const oldA = 1 - seg(btn, 0, 0.4);
-      if (oldA > 0) { blob(ctx, eL[0], eL[1], er, er * 1.05, { key: k + ':eyeL', alpha: al * pEy * oldA }); holes(eL, er * 0.38, 2); shine(eL, er); }
-      const nb = seg(btn, 0.3, 1);
-      if (nb > 0) { // синяя пуговица (Аня, 1962)
-        const br = 9.5 * M.s, poly = ellipsePoly(eL[0], eL[1], br, br, 0, 24);
-        knock(ctx, [poly], al * nb);
-        P.volume(P.ellShape(eL[0], eL[1], br, br, 0, 0.6), { key: k + ':btnV', color: 'a1', alpha: al * nb, w: 0.35, shine: 1.3, noCore: true });
-        stroke(ctx, ellipsePts(eL[0], eL[1], br, br, 0, k + 'btn'), { key: k + ':btn', closed: true, color: 'a1:dk', w: 2.2, alpha: al, p: nb, amp: 0.5 });
-        if (nb > 0.7) {
-          holes(eL, br * 0.36, 4);
-          stroke(ctx, [[eL[0] - br * 0.36, eL[1] - br * 0.36], [eL[0] + br * 0.36, eL[1] + br * 0.36]], { key: k + ':thr1', w: 1.2, alpha: al * 0.8, sketch: false, gaps: false });
-          stroke(ctx, [[eL[0] + br * 0.36, eL[1] - br * 0.36], [eL[0] - br * 0.36, eL[1] + br * 0.36]], { key: k + ':thr2', w: 1.2, alpha: al * 0.8, sketch: false, gaps: false });
-          shine(eL, br);
+  // большая плоскость (стена, пол, крыша): мелок темнеет с расстоянием от света
+  function planeCrayon(key, pts3, role, n, o = {}) {
+    const pp = S.projPoly(pts3);
+    if (pp.length < 3) return null;
+    const poly = pp.map((q) => [q[0], q[1]]);
+    const al = o.al === undefined ? 1 : o.al, p = o.p === undefined ? 1 : o.p;
+    if (al <= 0.004 || p <= 0) return poly;
+    const base = P.polyShape(poly, { normal: [0, 0, 1] });
+    const P0 = pts3[0], reach = o.reach || 700, out = [1, 0, 1];
+    const shape = {
+      cx: base.cx, cy: base.cy, x0: base.x0, y0: base.y0, x1: base.x1, y1: base.y1,
+      test(x, y) {
+        if (!base.test(x, y)) return null;
+        const d = S.ray(x, y), den = dot(d, n);
+        let b = 0.6;
+        if (Math.abs(den) > 1e-6) {
+          const q = madd(S.CAM.pos, d, dot(sub(P0, S.CAM.pos), n) / den);
+          b = 1.25 - len(sub(q, S.LIGHT.pos)) / reach - (q[1] < 30 ? (30 - q[1]) / 90 : 0);
         }
-      }
-    }
-    // шарф (бабушка Аня, 2003)
-    if (m.scarf > 0) {
-      const g = scarfGeo(M);
-      const pBand = seg(m.scarf, 0, 0.45), pTail = seg(m.scarf, 0.35, 0.7), pFill = seg(m.scarf, 0.5, 1);
-      knock(ctx, [g.band], al * clamp(pBand * 3));
-      if (pTail > 0) knock(ctx, [g.tail], al * clamp(pTail * 3));
-      P.volume(P.polyShape(g.band, { round: 0.95, vy: (f) => lerp(-0.6, 0.5, f) }), { key: k + ':scV', color: 'a2', alpha: al, p: pFill, w: 0.55 });
-      P.volume(P.polyShape(g.tail, { round: 0.8 }), { key: k + ':scVt', color: 'a2', alpha: al, p: pFill, w: 0.5 });
-      // тень шарфа на груди
-      const stripes = [[-40, -112, -38, -128], [-18, -105, -17, -121], [6, -103, 6, -119], [28, -108, 27, -123], [48, -118, 46, -133], [16, -96, 33, -98], [19, -80, 37, -82]];
-      stripes.forEach((s, i) => {
-        if (pFill <= i / stripes.length) return;
-        stroke(P.L.color, [M(s[0], s[1]), M(s[2], s[3])], { key: k + ':scS' + i, color: 'a1', w: 5, alpha: al * 0.8, sketch: false, amp: 0.6 });
-      });
-      stroke(ctx, g.band, { key: k + ':scB', closed: true, color: 'line', w: 2.4, alpha: al, p: pBand });
-      stroke(ctx, g.tail, { key: k + ':scTl', closed: true, color: 'line', w: 2.4, alpha: al, p: pTail });
-      g.fr.forEach((f, i) => stroke(ctx, f, { key: k + ':fr' + i, w: 1.6, alpha: al * pFill, sketch: false, gaps: false }));
-    }
-    // заколка-сердечко (Соня, 2026)
-    if (m.clip > 0) {
-      const c = M(BG.ear[0], BG.ear[1]);
-      knock(ctx, [heartPts(c[0], c[1], 13 * M.s, 0.3)], al * m.clip);
-      drawHeart(ctx, c[0], c[1], 13 * M.s, k + ':clip', al, m.clip);
-    }
-    // пыль на мишке (чердак) и её облачко
-    if (o.dust > 0 || o.puff > 0) {
-      const r = P.staticRng(k + ':dust');
-      ctx.fillStyle = P.col('soft', 0.55 * al * (o.dust || 0) * (1 - (o.puff || 0)));
-      const pf = o.puff || 0;
-      for (let i = 0; i < 26; i++) {
-        const lx = (r() - 0.5) * 120, ly = -20 - r() * 190, sz = 1.2 + r() * 2.2;
-        const dir = Math.atan2(ly + 110, lx);
-        const pp2 = M(lx + Math.cos(dir) * pf * 110, ly + Math.sin(dir) * pf * 110 - pf * 30);
-        ctx.beginPath(); ctx.arc(pp2[0], pp2[1], sz * M.s, 0, 6.283); ctx.fill();
-      }
-      if (pf > 0 && pf < 1) {
-        for (let i = 0; i < 6; i++) {
-          const a = -Math.PI / 2 + (i - 2.5) * 0.55, rr = (60 + pf * 120) * M.s;
-          const c = add(bearCenter(o.x, o.y, o.s), [Math.cos(a) * rr, Math.sin(a) * rr]);
-          stroke(ctx, arcPts(c[0], c[1], 14 * M.s, 10 * M.s, 3.4, 6.0, 8), { key: k + ':puff' + i, color: 'soft', w: 1.6, alpha: al * (1 - pf) * 0.8, sketch: false });
-        }
-      }
-    }
+        out[0] = b;
+        return out;
+      },
+    };
+    const ang = o.angle === undefined ? -0.35 : o.angle, C = P.L.color, ws = o.w || 1;
+    P.crayon(C, shape, { key: key + ':a', color: role, alpha: 0.5 * al, w: 15 * ws, gap: 10 * ws, angle: ang, maxLen: 140, still: true, p });
+    P.crayon(C, shape, { key: key + ':b', color: role, alpha: 0.38 * al, w: 12 * ws, gap: 9 * ws, angle: ang + 0.7, maxLen: 90, still: true, p, cond: (m) => m[0] < 0.62 });
+    P.crayon(C, shape, { key: key + ':c', color: role + ':sh', alpha: 0.42 * al, w: 10 * ws, gap: 8 * ws, angle: ang - 0.5, maxLen: 80, still: true, p, cond: (m) => m[0] < 0.36 });
+    P.crayon(P.L.graphite, shape, { key: key + ':g', color: 'line', alpha: 0.2 * al, w: 1.3, gap: 5, angle: ang + 1.2, maxLen: 50, still: true, p, cond: (m) => m[0] < 0.12 });
+    return poly;
   }
-
-  // =====================================================================
-  // ЛЮДИ: один параметрический человек, возраст — непрерывный параметр
-  // =====================================================================
-  const HEIGHT_TAB = [[1, 75], [2, 86], [3, 95], [4, 102], [5, 109], [6, 115], [7, 121], [8, 127], [10, 138], [12, 150], [14, 159], [16, 163], [18, 165], [60, 165], [80, 160]];
-  const HEADS_TAB = [[1, 3.9], [3, 4.4], [5, 4.9], [7, 5.25], [10, 5.7], [13, 6.1], [16, 6.4], [18, 6.5], [80, 6.5]];
-  const heightPx = (age, spec) => tab(HEIGHT_TAB, age) * PXCM * (spec && spec.old ? 0.95 : 1) * ((spec && spec.hk) || 1);
-
-  function personGeo(spec, st) {
-    const age = st.age, a = clamp((age - 4) / 14);
-    const Hp = heightPx(age, spec);
-    const R = Hp / tab(HEADS_TAB, age) / 2;
-    const f = st.face || 1;
-    const X = st.x, G = GROUND;
-    const headCY = -Hp + R * 1.02;
-    const neckY = headCY + R * 0.92;
-    const shY = neckY + R * lerp(0.08, 0.26, a);
-    const sw = R * lerp(1.0, 1.25, a);
-    const hemY = spec.long ? -Hp * 0.09 : -Hp * lerp(0.30, 0.29, a);
-    const waistY = shY + (hemY - shY) * lerp(0.5, 0.4, a);
-    const wh = sw * lerp(0.92, 0.72, a), hh = sw * lerp(1.2, 1.16, a) * (spec.long ? 1.12 : 1);
-    const hipY = waistY + (hemY - waistY) * 0.3;
-    const lean = (st.lean || 0) * f;
-    // походка: подпрыгивание
-    const ph = st.walk;
-    const bob = ph === undefined || ph === null ? 0 : -Math.abs(Math.sin(ph)) * R * 0.18;
-    const cl = Math.cos(lean), sl = Math.sin(lean);
-    const up = (px, py) => { const dy = py - hipY; return [X + px * cl - dy * sl, G + bob + hipY + px * sl + dy * cl]; };
-    const low = (px, py) => [X + px, G + bob + py];
-    const g = { age, a, Hp, R, f, X, G, headCY, neckY, shY, sw, hemY, waistY, hipY, lean, up, low, bob };
-    g.head = up(0, headCY);
-    g.headTop = up(0, -Hp - R * 0.15);
-    // платье
-    const dressL = [
-      up(-R * 0.34, neckY + R * 0.04), up(-sw, shY + R * 0.16), up(-sw * 0.93, shY + R * 0.75),
-      up(-wh, waistY), low(-hh, hemY), low(-hh * 0.5, hemY + R * 0.05), low(0, hemY + R * 0.07),
-      low(hh * 0.5, hemY + R * 0.05), low(hh, hemY), up(wh, waistY), up(sw * 0.93, shY + R * 0.75),
-      up(sw, shY + R * 0.16), up(R * 0.34, neckY + R * 0.04), up(0, neckY + R * 0.26),
+  // коробка-параллелепипед (видимые грани): стол, табурет, подоконник, чемодан
+  function cuboidNow(key, c, fr, sz, role, o = {}) {
+    const al = o.al === undefined ? 1 : o.al, p = o.p === undefined ? 1 : o.p;
+    if (al <= 0.004) return;
+    const hw = sz[0] / 2, hh = sz[1] / 2, hd = sz[2] / 2;
+    const L = (x, y, z) => at(c, fr, x, y, z);
+    const faces = [
+      [[L(-hw, -hh, hd), L(hw, -hh, hd), L(hw, hh, hd), L(-hw, hh, hd)], fr.f],
+      [[L(hw, -hh, -hd), L(-hw, -hh, -hd), L(-hw, hh, -hd), L(hw, hh, -hd)], mul(fr.f, -1)],
+      [[L(-hw, -hh, -hd), L(-hw, -hh, hd), L(-hw, hh, hd), L(-hw, hh, -hd)], mul(fr.r, -1)],
+      [[L(hw, -hh, hd), L(hw, -hh, -hd), L(hw, hh, -hd), L(hw, hh, hd)], fr.r],
+      [[L(-hw, hh, hd), L(hw, hh, hd), L(hw, hh, -hd), L(-hw, hh, -hd)], fr.u],
+      [[L(-hw, -hh, -hd), L(hw, -hh, -hd), L(hw, -hh, hd), L(-hw, -hh, hd)], mul(fr.u, -1)],
     ];
-    g.dress = curve(dressL, true, 5);
-    // ноги
-    const legX = sw * lerp(0.36, 0.3, a), lw = R * lerp(0.17, 0.13, a);
-    g.legs = [-1, 1].map((s) => {
-      const sw2 = ph === undefined || ph === null ? 0 : Math.sin(ph) * s * R * 0.42;
-      const lift = ph === undefined || ph === null ? 0 : Math.max(0, Math.sin(ph) * s) * R * 0.22;
-      const top = low(s * legX, hemY - R * 0.1);
-      const foot = [X + s * legX + sw2, G - lift];
-      return { top, foot, w: lw, poly: limbPoly([top, foot], lw, lw * 0.9), shoe: [foot[0] + f * R * 0.1, foot[1] - R * 0.08], sr: [R * 0.3, R * 0.16] };
+    faces.forEach(([pts, n], i) => {
+      if (dot(n, sub(S.CAM.pos, pts[0])) <= 0) return;
+      S.drawPoly(key + i, pts, { color: role, normal: n, alpha: al, p, line: true, lw: o.lw || 1.6, shade: { noCore: true, w: o.ws || 0.6 } });
     });
-    // руки (обратная кинематика к целям-кистям)
-    const ua = Hp * lerp(0.15, 0.172, a), fa = Hp * lerp(0.135, 0.158, a);
-    g.ua = ua; g.fa = fa;
-    g.shoulderL = up(-sw * 0.86, shY + R * 0.22);
-    g.shoulderR = up(sw * 0.86, shY + R * 0.22);
-    const restL = up(-sw - R * 0.12, shY + R * 0.22 + (ua + fa) * 0.985);
-    const restR = up(sw + R * 0.12, shY + R * 0.22 + (ua + fa) * 0.985);
-    g.rest = { l: restL, r: restR };
-    const hands = st.hands || {};
-    const aw = R * lerp(0.27, 0.2, a);
-    g.arms = [['l', g.shoulderL, hands.l || restL], ['r', g.shoulderR, hands.r || restR]].map(([side, S, T2]) => {
-      const k1 = ik(S[0], S[1], T2[0], T2[1], ua, fa, 1), k2 = ik(S[0], S[1], T2[0], T2[1], ua, fa, -1);
-      const mode = st.hands ? (st.elbow || 'down') : 'out';
-      const sd = side === 'l' ? -1 : 1;
-      const k = mode === 'out' ? ((k1.e[0] - X) * sd > (k2.e[0] - X) * sd ? k1 : k2) : (k1.e[1] > k2.e[1] ? k1 : k2);
-      const pts = curve([S, k.e, k.h], false, 6);
-      return { side, S, E: k.e, Hn: k.h, pts, w: aw, poly: limbPoly(pts, aw, aw * 0.85), hr: R * 0.2 };
-    });
-    // куда кладём мишку: обнимает / протягивает / держит над головой
-    g.hugC = up(f * R * 0.08, shY + R * lerp(1.95, 2.35, a));
-    g.giveC = up(f * (sw * 0.6 + (ua + fa) * 0.55), shY + R * 2.0);
-    g.upC = up(f * R * 0.3, shY - (ua + fa) * 0.85 - 18);
-    return g;
   }
-  // кисти вокруг мишки с центром c
-  function hugHands(c, s) { return { l: [c[0] + 12 * s / BS, c[1] + 26 * s / BS], r: [c[0] - 14 * s / BS, c[1] + 34 * s / BS] }; }
-  function sideHands(c, s, dy = 4) { return { l: [c[0] - 44 * s / BS, c[1] + dy], r: [c[0] + 44 * s / BS, c[1] + dy] }; }
-  // ребёнок тянет руки вперёд-вверх
-  function reachHands(g) { const R = g.R; return { l: g.up(g.f * R * 1.3 - R * 0.3, g.shY - R * 0.3), r: g.up(g.f * R * 1.3 + R * 0.3, g.shY - R * 0.1) }; }
-  // камера по ключам: [начало, длительность, цель]
-  function camTrack(t, start, keys) {
-    let cam = start;
-    for (const [t0, d, target] of keys) {
-      if (t <= t0) break;
-      cam = camLerp(cam, target, easeInOut(seg(t, t0, t0 + d)));
-    }
-    return cam;
-  }
-  const DOORC = { x: 1390, y: 650, z: 1.5 };
+  function cuboid(key, c, fr, sz, role, o = {}) { S.push(S.depth(c) + (o.bias || 0), () => cuboidNow(key, c, fr, sz, role, o)); }
 
-  // причёски (координаты в радиусах головы, центр головы = 0,0)
-  const HAIR = {
-    cap: [[-1.02, 0.15], [-1.06, -0.35], [-0.86, -0.82], [-0.45, -1.1], [0, -1.16], [0.45, -1.1], [0.86, -0.82], [1.06, -0.35], [1.02, 0.15],
-      [0.9, 0.1], [0.87, -0.3], [0.62, -0.55], [0.26, -0.6], [0, -0.5], [-0.26, -0.6], [-0.62, -0.55], [-0.87, -0.3], [-0.9, 0.1]],
-    capHigh: [[-1.0, 0.0], [-1.05, -0.4], [-0.86, -0.84], [-0.45, -1.1], [0, -1.16], [0.45, -1.1], [0.86, -0.84], [1.05, -0.4], [1.0, 0.0],
-      [0.9, -0.05], [0.84, -0.42], [0.55, -0.68], [0.1, -0.72], [-0.3, -0.62], [-0.65, -0.6], [-0.86, -0.4], [-0.9, -0.05]],
-    bob: [[-1.04, 0.76], [-1.13, 0.1], [-1.02, -0.6], [-0.6, -1.06], [0, -1.17], [0.6, -1.06], [1.02, -0.6], [1.13, 0.1], [1.04, 0.76],
-      [0.84, 0.8], [0.88, 0.0], [0.76, -0.33], [0.4, -0.36], [0, -0.34], [-0.4, -0.36], [-0.76, -0.33], [-0.88, 0.0], [-0.84, 0.8]],
-  };
-  // пряди: от макушки к краю причёски
-  const STRANDS = {
-    cap: [[0, -1.1, -0.55, -0.62], [0, -1.1, -0.95, -0.2], [0, -1.1, 0.55, -0.62], [0, -1.1, 0.95, -0.2]],
-    capHigh: [[0, -1.12, -0.5, -0.7], [0, -1.12, -0.95, -0.25], [0, -1.12, 0.5, -0.7], [0, -1.12, 0.95, -0.25]],
-    bob: [[0, -1.12, -0.6, -0.4], [0, -1.12, -1.0, 0.5], [0, -1.12, 0.6, -0.4], [0, -1.12, 1.0, 0.5], [-0.3, -1.05, -0.95, 0.7], [0.3, -1.05, 0.95, 0.7]],
-  };
-
-  function drawHair(ctx, style, g, k, al, p, role, extraAlpha = 1) {
-    const A = al * extraAlpha;
-    if (A <= 0.004) return;
-    const R = g.R, hc = g.head;
-    const c = Math.cos(g.lean), s = Math.sin(g.lean);
-    const H2 = (x, y) => [hc[0] + (x * c - y * s) * R, hc[1] + (x * s + y * c) * R];
-    const key = style === 'bob' ? 'bob' : style === 'bun' ? 'capHigh' : 'cap';
-    const poly = curve(HAIR[key].map(([x, y]) => H2(x, y)), true, 4);
-    const extras = [];
-    if (style === 'pigtails') {
-      for (const sd of [-1, 1]) extras.push({ e: [sd * 1.3, 0.78, 0.24, 0.5, sd * -0.35], tie: [sd * 1.06, 0.2] });
-    } else if (style === 'ponytail') {
-      extras.push({ e: [1.22 * g.f, 0.05, 0.25, 0.58, -0.32 * g.f], tie: [0.98 * g.f, -0.5] });
-    } else if (style === 'bun') {
-      extras.push({ e: [0, -1.24, 0.42, 0.33, 0], tie: null });
-    }
-    const exGeo = extras.map((ex) => { const cc = H2(ex.e[0], ex.e[1]); return { cc, rx: ex.e[2] * R, ry: ex.e[3] * R, rot: ex.e[4] + g.lean }; });
-    // хвостики и пучок — за головой
-    exGeo.forEach((eg, i) => {
-      const poly2 = ellipsePoly(eg.cc[0], eg.cc[1], eg.rx, eg.ry, eg.rot, 24);
-      knock(ctx, [poly2], A * clamp(p * 3));
-      P.volume(P.ellShape(eg.cc[0], eg.cc[1], eg.rx, eg.ry, eg.rot), { key: k + ':hxV' + i + style, color: role, alpha: A, p, w: 0.45, shine: 0.8 });
-      stroke(ctx, ellipsePts(eg.cc[0], eg.cc[1], eg.rx, eg.ry, eg.rot, k + 'hx' + i), { key: k + ':hx' + i + style, closed: true, w: 2.2, alpha: A, p });
-      stroke(ctx, [[eg.cc[0], eg.cc[1] - eg.ry * 0.7], [eg.cc[0] + Math.sin(eg.rot) * eg.ry * 0.5, eg.cc[1] + eg.ry * 0.6]], { key: k + ':hxs' + i, w: 1.3, alpha: A * 0.6 * p, sketch: false });
-    });
-    knock(ctx, [poly], A * clamp(p * 3));
-    P.volume(P.polyShape(poly, { round: 0.95, vy: (f) => lerp(-0.75, 0.35, f) }), { key: k + ':hairV:' + style, color: role, alpha: A, p, w: 0.6, shine: 0.9, lightAt: 0.8 });
-    (STRANDS[key] || []).forEach(([x0, y0, x1, y1], i) => {
-      const a = H2(x0, y0), b = H2(x1, y1), m = H2((x0 + x1) / 2 + (x1 - x0) * 0.15, (y0 + y1) / 2 - 0.12);
-      stroke(ctx, curve([a, m, b], false, 6), { key: k + ':str' + i + style, w: 1.3, alpha: A * 0.55 * p, sketch: false });
-    });
-    stroke(ctx, poly, { key: k + ':hair:' + style, closed: true, w: 2.4, alpha: A, p });
-    exGeo.forEach((eg, i) => {
-      const ex = extras[i];
-      if (!ex.tie) return;
-      const t2 = H2(ex.tie[0], ex.tie[1]);
-      blob(ctx, t2[0], t2[1], R * 0.1, R * 0.1, { key: k + ':tie' + i, color: style === 'pigtails' ? 'a1' : 'line', alpha: A * p });
-      if (style === 'pigtails') { // бантики
-        for (const d of [-1, 1]) {
-          const bow = [t2, [t2[0] + d * R * 0.3, t2[1] - R * 0.2], [t2[0] + d * R * 0.28, t2[1] + R * 0.18]];
-          P.volume(P.polyShape(bow, { round: 0.7 }), { key: k + ':bowV' + i + d, color: 'a1', alpha: A * p, w: 0.3, noCore: true });
-          stroke(ctx, bow.concat([t2]), { key: k + ':bow' + i + d, color: 'a1:dk', w: 1.8, alpha: A * p, sketch: false });
-        }
-      }
-    });
-    if (style === 'sprout') { // «пальма» на макушке
-      const base = H2(0, -1.1);
-      [[-0.32, -1.5], [0, -1.62], [0.3, -1.5]].forEach(([x, y], i) => stroke(ctx, curve([base, H2(x * 0.5, y + 0.12), H2(x, y)], false, 6), { key: k + ':spr' + i, w: 2.4, color: role + ':dk', alpha: A * p }));
-      blob(ctx, base[0], base[1], R * 0.09, R * 0.08, { key: k + ':sprT', alpha: A * p });
-    }
-  }
-
-  function drawPerson(ctx, spec, st, layer = 'all') {
-    const al = st.alpha === undefined ? 1 : st.alpha;
-    if (al <= 0.004) return null;
-    const g = personGeo(spec, st);
-    const d = st.draw === undefined ? 1 : st.draw;
-    const k = st.key || 'p';
-    const pp = (a, b) => seg(d, a, b);
-    const R = g.R;
-    const kAl = al * clamp(d * 2.5);
-    const vol = (shape, role, name, p, extra = {}) => P.volume(shape, Object.assign({ key: k + ':v:' + name, color: role, alpha: al, p }, extra));
-    if (layer === 'all' || layer === 'body') {
-      // строительные линии
-      const build = (1 - seg(d, 0.55, 1)) * clamp(d * 6);
-      if (build > 0.01) {
-        guide(ctx, ellipsePts(g.head[0], g.head[1], R * 1.05, R * 1.05, 0, k + 'gh'), { key: k + ':gh', closed: true, alpha: build * al });
-        guide(ctx, [g.headTop, [g.X, g.G + 4]], { key: k + ':ga', alpha: build * al });
-        guide(ctx, [g.up(-g.sw * 1.2, g.shY), g.up(g.sw * 1.2, g.shY)], { key: k + ':gs', alpha: build * al * 0.8 });
-        guide(ctx, [g.low(-g.sw * 1.3, g.hemY), g.low(g.sw * 1.3, g.hemY)], { key: k + ':gm', alpha: build * al * 0.6 });
-      }
-      // падающая тень на пол
-      if (st.shadow !== false) P.castShadow(g.X, GROUND, g.sw * 1.45, R * 0.34, { key: k + ':cast', alpha: kAl * 0.9, h: g.Hp * 0.55 });
-      // ноги и туфли
-      const pLeg = pp(0.6, 0.8);
-      g.legs.forEach((lg, i) => {
-        knock(ctx, [lg.poly], kAl * clamp(pLeg * 3));
-        vol(P.capsuleShape([lg.top, lg.foot], lg.w, lg.w * 0.9), spec.legs || 'skin', 'leg' + i, pLeg, { w: 0.42, noCore: true, shine: 0.6 });
-        stroke(ctx, lg.poly, { key: k + ':leg' + i, closed: true, w: 2.2, alpha: al, p: pLeg });
-        const sp = ellipsePoly(lg.shoe[0], lg.shoe[1], lg.sr[0], lg.sr[1], 0, 18);
-        knock(ctx, [sp], kAl * pLeg);
-        vol(P.ellShape(lg.shoe[0], lg.shoe[1], lg.sr[0], lg.sr[1], 0, 0.8), spec.shoes || 'hairDark', 'shoe' + i, pLeg, { w: 0.35, shine: 1.2, noCore: true });
-        stroke(ctx, ellipsePts(lg.shoe[0], lg.shoe[1], lg.sr[0], lg.sr[1], 0, k + 'sh' + i), { key: k + ':shoe' + i, closed: true, w: 2.2, alpha: al, p: pLeg });
-      });
-      // платье: цилиндр, плечи смотрят вверх
-      const pDr = pp(0.35, 0.7);
-      knock(ctx, [g.dress], kAl * clamp(pDr * 3));
-      vol(P.polyShape(g.dress, { vy: (f) => lerp(-0.5, 0.25, f) }), spec.dress, 'dress', pp(0.45, 0.95), { w: 0.9 });
-      // складки
-      for (const sd of [-0.45, 0.1, 0.55]) {
-        const a = g.low(g.sw * sd, g.hipY + R * 0.4), b = g.low(g.sw * sd * 1.35, g.hemY - R * 0.1);
-        stroke(ctx, [a, b], { key: k + ':fold' + sd, w: 1.3, alpha: al * 0.45 * pp(0.6, 1), sketch: false });
-      }
-      stroke(ctx, g.dress, { key: k + ':dress', closed: true, w: 2.6, alpha: al, p: pDr });
-      drawPattern(ctx, spec, g, k, al, pp(0.65, 1));
-      // шея и голова
-      const pHd = pp(0, 0.25);
-      const neck = [g.up(0, g.headCY + R * 0.7), g.up(0, g.neckY + R * 0.12)];
-      vol(P.capsuleShape(neck, R * 0.22), 'skin', 'neck', pHd, { w: 0.35, noCore: true, shadowAt: 0.45 });
-      stroke(ctx, [g.up(-R * 0.2, g.headCY + R * 0.85), g.up(-R * 0.22, g.neckY + R * 0.1)], { key: k + ':nk1', w: 2, alpha: al, p: pHd, sketch: false });
-      stroke(ctx, [g.up(R * 0.2, g.headCY + R * 0.85), g.up(R * 0.22, g.neckY + R * 0.1)], { key: k + ':nk2', w: 2, alpha: al, p: pHd, sketch: false });
-      const headPoly = ellipsePoly(g.head[0], g.head[1], R * 0.96, R * 1.04, g.lean, 30);
-      knock(ctx, [headPoly], kAl * clamp(pHd * 3));
-      vol(P.ellShape(g.head[0], g.head[1], R * 0.95, R * 1.03, g.lean), 'skin', 'head', pHd, { w: 0.7, shine: 0.55, shadowAt: 0.12, noCore: true, dense: 0.85 });
-      stroke(ctx, ellipsePts(g.head[0], g.head[1], R * 0.96, R * 1.04, g.lean, k + 'hd'), { key: k + ':head', closed: true, w: 2.6, alpha: al, p: pHd });
-      // уши
-      for (const sd of [-1, 1]) {
-        const ec = g.up(sd * R * 0.98, g.headCY + R * 0.12);
-        stroke(ctx, arcPts(ec[0], ec[1], R * 0.14, R * 0.2, sd < 0 ? Math.PI * 0.5 : -Math.PI * 0.5, sd < 0 ? Math.PI * 1.5 : Math.PI * 0.5, 8), { key: k + ':ear' + sd, w: 2, alpha: al, p: pHd, sketch: false });
-      }
-      // лицо
-      drawFace(ctx, spec, st, g, k, al, pp(0.3, 0.5));
-      // причёска (у Ани в детстве — косички, потом пучок)
-      const hm = spec.hairKid === spec.hairAdult ? 0 : seg(g.age, 11, 15);
-      const pH = pp(0.15, 0.45);
-      if (hm < 1) drawHair(ctx, spec.hairKid, g, k, al, pH, spec.hairColor, 1 - hm);
-      if (hm > 0) drawHair(ctx, spec.hairAdult, g, k + 'a', al, pH, spec.hairColor, hm);
-      if (spec.glasses) drawGlasses(ctx, g, k, al, pp(0.4, 0.55));
-      if (st.clip !== undefined && st.clip > 0) { // заколка в волосах Сони
-        const c = clipPos(g);
-        knock(ctx, [heartPts(c[0], c[1], R * 0.2, 0.3)], al * st.clip);
-        drawHeart(ctx, c[0], c[1], R * 0.2, k + ':clip', al * st.clip, pp(0.4, 0.6));
-      }
-    }
-    if (layer === 'all' || layer === 'arms') {
-      const pAr = pp(0.7, 0.95);
-      g.arms.forEach((ar, i) => {
-        knock(ctx, [ar.poly], kAl * clamp(pAr * 3));
-        vol(P.capsuleShape([ar.S, ar.E, ar.Hn], ar.w, ar.w * 0.85), spec.dress, 'arm' + i, pAr, { w: 0.5 });
-        stroke(ctx, ar.poly, { key: k + ':arm' + i, closed: true, w: 2.4, alpha: al, p: pAr });
-        const hp = ellipsePoly(ar.Hn[0], ar.Hn[1], ar.hr, ar.hr * 1.05, 0, 18);
-        knock(ctx, [hp], kAl * clamp(pAr * 3));
-        vol(P.ellShape(ar.Hn[0], ar.Hn[1], ar.hr, ar.hr * 1.05), 'skin', 'hand' + i, pAr, { w: 0.3, noCore: true, shine: 0.5 });
-        stroke(ctx, ellipsePts(ar.Hn[0], ar.Hn[1], ar.hr, ar.hr * 1.05, 0, k + 'hn' + i), { key: k + ':hand' + i, closed: true, w: 2.2, alpha: al, p: pAr });
-      });
-    }
-    return g;
-  }
-  const clipPos = (g) => { const c = Math.cos(g.lean), s = Math.sin(g.lean); return [g.head[0] + (0.62 * c + 0.78 * s) * g.R, g.head[1] + (0.62 * s - 0.78 * c) * g.R]; };
-
-  function drawFace(ctx, spec, st, g, k, al, p) {
-    if (p <= 0) return;
-    const R = g.R, hc = g.head, c = Math.cos(g.lean), s = Math.sin(g.lean);
-    const F = (x, y) => [hc[0] + (x * c - y * s) * R, hc[1] + (x * s + y * c) * R];
-    const lk = (st.look === undefined ? g.f * 0.6 : st.look) * 0.08;
-    const ey = lerp(0.2, 0.06, g.a), ex = lerp(0.36, 0.33, g.a);
-    const face = st.mood || 'smile';
-    const lc = P.L.light;
-    for (const sd of [-1, 1]) {
-      const e = F(sd * ex + lk, ey);
-      if (face === 'happy') {
-        stroke(ctx, arcPts(e[0], e[1] + R * 0.04, R * 0.1, R * 0.08, Math.PI * 1.1, Math.PI * 1.9, 6), { key: k + ':eh' + sd, w: 2.2, alpha: al * p, sketch: false, gaps: false });
-      } else {
-        blob(ctx, e[0], e[1], R * 0.075, R * 0.1, { key: k + ':eye' + sd, alpha: al * p });
-        lc.fillStyle = P.col('light', 0.95 * al * p);
-        lc.beginPath(); lc.arc(e[0] - R * 0.025, e[1] - R * 0.04, Math.max(1 / P.z, R * 0.03), 0, 6.283); lc.fill();
-      }
-      // румянец мелком
-      const ch = F(sd * 0.56 + lk * 0.5, ey + 0.32);
-      P.crayon(P.L.color, P.ellShape(ch[0], ch[1], R * 0.17, R * 0.11), { key: k + ':ch' + sd, color: 'warm', alpha: 0.42 * al * p, w: 5, gap: 3.5, angle: -0.4, maxLen: 20 });
-      if (spec.old) stroke(ctx, arcPts(...F(sd * (ex + 0.17) + lk, ey + 0.02), R * 0.08, R * 0.1, sd < 0 ? 2.4 : -0.6, sd < 0 ? 3.6 : 0.6, 5), { key: k + ':wr' + sd, w: 1.2, alpha: al * p * 0.6, sketch: false, gaps: false });
-    }
-    // нос и рот
-    const n = F(lk * 1.4 + g.f * 0.04, ey + 0.22);
-    stroke(ctx, [[n[0] - R * 0.03, n[1] - R * 0.04], [n[0] + R * 0.02 * g.f, n[1] + R * 0.03]], { key: k + ':nose', w: 1.8, alpha: al * p, sketch: false, gaps: false });
-    const my = lerp(0.52, 0.47, g.a);
-    if (face === 'open') {
-      const m = F(lk, my);
-      const mouth = curve([[m[0] - R * 0.14, m[1] - R * 0.03], [m[0], m[1] + R * 0.12], [m[0] + R * 0.14, m[1] - R * 0.03]], false, 5);
-      P.crayon(P.L.color, P.polyShape(mouth), { key: k + ':moF', color: 'warm:dk', alpha: 0.6 * al * p, w: 3, gap: 2.5 });
-      stroke(ctx, mouth.concat([[m[0] - R * 0.14, m[1] - R * 0.03]]), { key: k + ':mo', w: 2, alpha: al * p, sketch: false });
-    } else {
-      stroke(ctx, curve([F(-0.19 + lk, my - 0.03), F(lk, my + 0.08), F(0.19 + lk, my - 0.03)], false, 5), { key: k + ':mouth', w: 2.1, alpha: al * p, sketch: false });
-    }
-  }
-  function drawGlasses(ctx, g, k, al, p) {
-    if (p <= 0) return;
-    const R = g.R, hc = g.head, c = Math.cos(g.lean), s = Math.sin(g.lean);
-    const F = (x, y) => [hc[0] + (x * c - y * s) * R, hc[1] + (x * s + y * c) * R];
-    const lk = g.f * 0.6 * 0.08, ey = lerp(0.2, 0.06, g.a), ex = lerp(0.36, 0.33, g.a);
-    const lc = P.L.light;
-    for (const sd of [-1, 1]) {
-      const e = F(sd * ex + lk, ey);
-      stroke(ctx, ellipsePts(e[0], e[1], R * 0.21, R * 0.18, 0, k + 'gl' + sd), { key: k + ':gl' + sd, closed: true, w: 1.8, alpha: al, p });
-      // блик на стекле
-      lc.strokeStyle = P.col('light', 0.8 * al * p); lc.lineWidth = 2.2 / P.z; lc.lineCap = 'round';
-      lc.beginPath(); lc.moveTo(e[0] - R * 0.1, e[1] - R * 0.02); lc.lineTo(e[0] - R * 0.02, e[1] - R * 0.1); lc.stroke();
-    }
-    stroke(ctx, [F(-ex + 0.21 + lk, ey - 0.02), F(ex - 0.21 + lk, ey - 0.02)], { key: k + ':glb', w: 1.6, alpha: al, p, sketch: false, gaps: false });
-  }
-  function drawPattern(ctx, spec, g, k, al, p) {
-    if (p <= 0) return;
-    const R = g.R;
-    const L = P.L;
-    const clipTo = (c) => {
-      c.save();
-      c.beginPath();
-      c.moveTo(g.dress[0][0], g.dress[0][1]);
-      for (let i = 1; i < g.dress.length; i++) c.lineTo(g.dress[i][0], g.dress[i][1]);
-      c.closePath();
-      c.clip();
-    };
-    clipTo(ctx); clipTo(L.light);
-    if (spec.pattern === 'dots') {
-      // белый горох мелком
-      L.light.fillStyle = P.col('light', 0.85 * al * p);
-      for (let iy = 0; iy < 9; iy++) for (let ix = -4; ix <= 4; ix++) {
-        const lx = ix * R * 0.42 + (iy % 2) * R * 0.21, ly = g.shY + R * 0.35 + iy * R * 0.46;
-        if (ly > g.hemY) continue;
-        const pt = ly < g.hipY ? g.up(lx, ly) : g.low(lx, ly);
-        if ((ix + iy * 9) / 81 + 0.5 > p * 1.5) continue;
-        L.light.beginPath(); L.light.arc(pt[0], pt[1], R * 0.075, 0, 6.283); L.light.fill();
-      }
-      for (const sd of [-1, 1]) {
-        const col = [g.up(0, g.neckY + R * 0.26), g.up(sd * R * 0.3, g.neckY + R * 0.5), g.up(sd * R * 0.42, g.neckY + R * 0.06)];
-        P.crayon(L.light, P.polyShape(curve(col, false, 6)), { key: k + ':colF' + sd, color: 'light', alpha: 0.9 * al * p, w: 4, gap: 3 });
-        stroke(ctx, curve(col, false, 6), { key: k + ':col' + sd, w: 2, alpha: al * p });
-      }
-    } else if (spec.pattern === 'stripes') {
-      for (let i = 0; i < 9; i++) {
-        const ly = g.shY + R * (0.6 + i * 0.52);
-        if (ly > g.hemY || i / 9 > p) continue;
-        const Ln = ly < g.hipY ? [g.up(-g.sw * 1.4, ly), g.up(g.sw * 1.4, ly)] : [g.low(-g.sw * 1.4, ly), g.low(g.sw * 1.4, ly)];
-        stroke(L.light, Ln, { key: k + ':str' + i, color: 'light', w: 5, alpha: al * 0.75, sketch: false });
-      }
-    } else if (spec.pattern === 'zigzag') {
-      const zy = g.shY + R * 1.05, pts = [];
-      for (let i = -6; i <= 6; i++) pts.push(g.up(i * R * 0.24, zy + (i % 2 ? R * 0.2 : 0)));
-      stroke(ctx, pts, { key: k + ':zz', color: 'a1', w: 3.2, alpha: al, p });
-      stroke(ctx, pts.map(([x, y]) => [x, y + R * 0.35]), { key: k + ':zz2', color: 'a1', w: 2.6, alpha: al * 0.8, p });
-    } else if (spec.pattern === 'cardigan') {
-      stroke(ctx, [g.up(0, g.neckY + R * 0.3), g.up(0, g.waistY + R * 0.3)], { key: k + ':cd', w: 2, alpha: al, p });
-      for (let i = 0; i < 3; i++) { const b = g.up(R * 0.1, g.neckY + R * (0.65 + i * 0.5)); blob(ctx, b[0], b[1], R * 0.06, R * 0.06, { key: k + ':cb' + i, alpha: al * p }); }
-      for (const sd of [-1, 1]) stroke(ctx, curve([g.up(sd * R * 0.35, g.neckY), g.up(sd * R * 0.12, g.neckY + R * 0.6), g.up(sd * R * 0.05, g.waistY)], false, 5), { key: k + ':lap' + sd, w: 1.8, alpha: al * 0.8, p });
-    } else if (spec.pattern === 'collar') {
-      for (const sd of [-1, 1]) {
-        const col = [g.up(0, g.neckY + R * 0.26), g.up(sd * R * 0.32, g.neckY + R * 0.52), g.up(sd * R * 0.44, g.neckY + R * 0.06)];
-        P.crayon(L.light, P.polyShape(curve(col, false, 6)), { key: k + ':colF' + sd, color: 'light', alpha: 0.9 * al * p, w: 4, gap: 3 });
-        stroke(ctx, curve(col, false, 6), { key: k + ':col' + sd, w: 2, alpha: al * p });
-      }
-    }
-    ctx.restore(); L.light.restore();
-    if (spec.pattern === 'collar') {
-      const pc = g.up(-R * 0.35, g.waistY + R * 0.4);
-      drawHeart(ctx, pc[0], pc[1], R * 0.14, k + ':pocket', al * p, p, 0);
-    }
-  }
-
-  // =====================================================================
-  // РЕКВИЗИТ
-  // =====================================================================
-  function drawFloor(ctx, key, p, al) {
-    if (al <= 0.004 || p <= 0) return;
-    stroke(ctx, [[-240, GROUND], [2160, GROUND + 2]], { key: key + ':fl', w: 2.6, alpha: al, p });
-    stroke(ctx, [[-240, GROUND - 24], [2160, GROUND - 22]], { key: key + ':bb', w: 1.8, alpha: al * 0.6, p });
-    for (let i = 0; i < 17; i++) {
-      const x = -240 + i * 150;
-      stroke(ctx, [[x, GROUND + 4], [x + (x - 960) * 0.42, 1120]], { key: key + ':bd' + i, w: 1.4, alpha: al * 0.4, p: seg(p, i / 20, 1), sketch: false });
-    }
-  }
-  // стена и пол мелком; тон темнеет вдали от света; световое пятно от окна
-  function drawRoom(key, wall, p, al, o = {}) {
-    if (al <= 0.004 || p <= 0) return;
-    const L = P.L, lp = P.light;
-    const far = (x, y) => Math.hypot(x - lp.x, (y - lp.y) * 1.25);
-    const wallS = P.rectShape(-420, -320, 2340, GROUND - 2);
-    const base = { still: true, world: true, p, step: 7, jitter: 14 };
-    P.crayon(L.color, wallS, Object.assign({}, base, { key: key + ':w1', color: wall, alpha: 0.36 * al, w: 18, gap: 11, angle: -0.35, maxLen: 210 }));
-    P.crayon(L.color, wallS, Object.assign({}, base, { key: key + ':w2', color: wall, alpha: 0.24 * al, w: 16, gap: 13, angle: 0.5, maxLen: 160, cond: (n, x, y) => far(x, y) > 520 }));
-    P.crayon(L.color, wallS, Object.assign({}, base, { key: key + ':w3', color: wall + ':sh', alpha: 0.17 * al, w: 15, gap: 12, angle: -0.6, maxLen: 120, cond: (n, x, y) => far(x, y) > 1000 + Math.sin(x * 0.004 + y * 0.003) * 160 || y > GROUND - 60 }));
-    // плинтус
-    P.crayon(L.color, P.rectShape(-420, GROUND - 24, 2340, GROUND), Object.assign({}, base, { key: key + ':bb', color: 'cream', alpha: 0.6 * al, w: 10, gap: 6, angle: 0.03, maxLen: 260 }));
-    // пол
-    const floorS = P.rectShape(-420, GROUND, 2340, 1320);
-    P.crayon(L.color, floorS, Object.assign({}, base, { key: key + ':f1', color: 'floor', alpha: 0.5 * al, w: 16, gap: 9, angle: 0.02, maxLen: 280 }));
-    P.crayon(L.color, floorS, Object.assign({}, base, { key: key + ':f2', color: 'floor:sh', alpha: 0.32 * al, w: 14, gap: 10, angle: -0.1, maxLen: 200, cond: (n, x, y) => y < GROUND + 34 || far(x, y) > 1000 }));
-    if (o.window) {
-      const [x0, , x1] = o.window;
-      const cx = (x0 + x1) / 2;
-      const patch = [[x0 + 10, GROUND + 14], [x1 - 10, GROUND + 14], [x1 + (x1 - cx) * 0.9, 1110], [x0 - (cx - x0) * 0.9, 1110]];
-      P.crayon(L.light, P.polyShape(patch), Object.assign({}, base, { key: key + ':lp', color: 'light', alpha: 0.42 * al * (o.sun === undefined ? 1 : o.sun), w: 14, gap: 9, angle: 0.06, maxLen: 120 }));
-    }
-  }
-
-  const DOOR = { l0: 1426, l1: 1468, r0: 1662, r1: 1704, top: 150, lint: 194 };
-  function drawDoor(ctx, key, p, al) {
-    if (al <= 0.004 || p <= 0) return;
-    const D = DOOR, G = GROUND, L = P.L;
-    // проём: соседняя комната в тени
-    const inner = P.rectShape(D.l1, D.lint, D.r0, G);
-    P.crayon(L.color, inner, { key: key + ':in1', color: 'shadow', alpha: 0.24 * al, w: 14, gap: 9, angle: -1.2, still: true, world: true, p, maxLen: 170 });
-    P.crayon(L.color, inner, { key: key + ':in2', color: 'shadow', alpha: 0.2 * al, w: 12, gap: 10, angle: 0.4, still: true, world: true, p, maxLen: 120, cond: (n, x) => x < D.l1 + 60 || x > D.r0 - 50 });
-    // наличник — крашеное дерево с объёмом
-    const frame = { still: true, noCore: true, w: 0.7, alpha: al, p };
-    P.volume(P.rectShape(D.l0, D.top, D.l1, G, [0.25, -0.1, 1]), Object.assign({ key: key + ':pl', color: 'cream' }, frame));
-    P.volume(P.rectShape(D.r0, D.top, D.r1, G, [-0.25, -0.1, 1]), Object.assign({ key: key + ':pr', color: 'cream' }, frame));
-    P.volume(P.rectShape(D.l0, D.top, D.r1, D.lint, [0, -0.3, 1]), Object.assign({ key: key + ':pt', color: 'cream' }, frame));
-    // тень наличника на стене
-    P.crayon(L.color, P.rectShape(D.r1, D.top + 10, D.r1 + 16, G), { key: key + ':sh', color: 'shadow', alpha: 0.28 * al, w: 8, gap: 5, angle: -1.3, still: true, world: true, p });
-    stroke(ctx, [[D.l0, G], [D.l0, D.top], [D.r1, D.top], [D.r1, G]], { key: key + ':out', w: 2.8, alpha: al, p });
-    stroke(ctx, [[D.l1, G], [D.l1, D.lint], [D.r0, D.lint], [D.r0, G]], { key: key + ':inn', w: 2.6, alpha: al, p: seg(p, 0.15, 1) });
-    for (let i = 0; i < 3; i++) {
-      stroke(ctx, [[D.l0 + 10 + i * 10, G - 30 - i * 70], [D.l0 + 12 + i * 9, D.lint + 40 + i * 60]], { key: key + ':gr' + i, w: 1.1, alpha: al * 0.35, p: seg(p, 0.3, 1), sketch: false });
-      stroke(ctx, [[D.r0 + 10 + i * 10, G - 60 - i * 50], [D.r0 + 12 + i * 9, D.lint + 30 + i * 70]], { key: key + ':grr' + i, w: 1.1, alpha: al * 0.35, p: seg(p, 0.3, 1), sketch: false });
-    }
-  }
-  // отметки роста
-  function genMarks(g, t, done) {
-    const out = [];
-    g.ages.forEach((age, i) => {
-      const tc = ageCrossTime(g, age);
-      const p = done ? 1 : seg(t, tc, tc + 0.22);
-      if (p <= 0) return;
-      const y = GROUND - heightPx(age, g.spec) - 4;
-      const last = i === g.ages.length - 1;
-      const yrA = done ? 0 : 1 - seg(t, g.grow[1] + 0.5, g.grow[1] + 1.1);
-      out.push({ key: g.name + age, y, color: g.color, p, year: String(g.born + age), yrA: yrA * p, name: last ? g.name : null, nameX: g.nameX, nameP: done ? 1 : seg(t, g.grow[1] + 0.6, g.grow[1] + 1.1) });
-    });
-    return out;
-  }
-  function drawMarks(ctx, marks, al, o = {}) {
+  // ---- комната
+  function room(E, o = {}) {
+    const al = o.al === undefined ? 1 : o.al, p = o.p === undefined ? 1 : o.p;
     if (al <= 0.004) return;
-    for (const m of marks) {
-      if (o.noNames) m.name = null;
-      stroke(ctx, [[DOOR.l0 - 6, m.y], [DOOR.l1 + 9, m.y + 1]], { key: 'mk:' + m.key, color: m.color, w: 3, alpha: al, p: m.p, sketch: false, gaps: false });
-      if (m.yrA > 0.004) write(ctx, m.year, DOOR.l0 - 14, m.y + 10, { key: 'mky:' + m.key, size: 30, color: m.color, align: 'right', alpha: al * m.yrA, weight: 500 });
-      if (m.name && m.nameP > 0) {
-        write(ctx, m.name, m.nameX, m.y + 11, { key: 'mkn:' + m.key, size: 38, color: m.color, align: 'right', p: m.nameP, alpha: al });
-        stroke(ctx, [[m.nameX + 8, m.y], [DOOR.l0 - 8, m.y]], { key: 'mkl:' + m.key, color: m.color, w: 1.4, alpha: al * 0.6, p: m.nameP, sketch: false });
-      }
-    }
-  }
-
-  function drawTree(ctx, key, x, p, al) {
-    if (al <= 0.004 || p <= 0) return;
-    const G = GROUND, top = G - 500;
-    P.castShadow(x, G, 230, 26, { key: key + ':cast', alpha: al * seg(p, 0.3, 0.8), h: 260 });
-    // ствол
-    const pT = seg(p, 0.4, 0.7);
-    P.volume(P.rectShape(x - 22, G - 64, x + 22, G), { key: key + ':trV', color: 'floor', alpha: al, p: pT, w: 0.6 });
-    stroke(ctx, [[x - 22, G - 62], [x - 22, G], [x + 22, G], [x + 22, G - 62]], { key: key + ':trunk', w: 2.4, alpha: al, p: pT });
-    const tiers = [[top + 290, G - 62, 215], [top + 190, top + 360, 172], [top + 95, top + 255, 125], [top + 10, top + 150, 74]];
-    tiers.forEach(([ty, by, hw], j) => {
-      const i = 3 - j;
-      const pts = [[x - hw, by], [x - hw * 0.18, ty + 14], [x, ty], [x + hw * 0.18, ty + 14], [x + hw, by]];
-      const n = 3 + i;
-      const sc = [];
-      for (let q = 0; q <= n * 6; q++) { const u = q / (n * 6); sc.push([x + hw - u * hw * 2, by + Math.abs(Math.sin(u * n * Math.PI)) * 16]); }
-      const poly = pts.concat(sc.slice(1));
-      const pt = seg(p, i * 0.12, 0.45 + i * 0.12);
-      knock(ctx, [poly], al * clamp(pt * 3));
-      P.volume(P.polyShape(poly, { round: 0.95, vy: (f) => lerp(-0.7, 0.55, f) }), { key: key + ':tV' + i, color: 'a2', alpha: al, p: pt, w: 0.9, dense: 1.15 });
-      // иголки: короткие штрихи по нижнему краю
-      stroke(ctx, pts, { key: key + ':t' + i, w: 2.6, alpha: al, p: pt });
-      stroke(ctx, sc, { key: key + ':ts' + i, w: 2.2, alpha: al, p: pt });
-      const gw = []; for (let q = 0; q <= 10; q++) { const u = q / 10; gw.push([x - hw * 0.75 + u * hw * 1.5, lerp(ty + (by - ty) * 0.45, ty + (by - ty) * 0.8, u) + Math.sin(u * 6) * 6]); }
-      stroke(P.L.light, gw, { key: key + ':gl' + i, color: 'cream', w: 3, alpha: al * 0.9, p: seg(p, 0.5, 1) });
+    const R = ROOM, k = 'r' + E.id, h = R.h;
+    const pW = seg(p, 0.15, 0.85), pF = seg(p, 0, 0.6), pL = seg(p, 0, 0.45);
+    S.push(BGD + 10, () => {
+      const walls = [
+        ['b', [[R.x0, 0, R.z0], [R.x1, 0, R.z0], [R.x1, h, R.z0], [R.x0, h, R.z0]], [0, 0, 1], -0.35],
+        ['l', [[R.x0, 0, R.z1], [R.x0, 0, R.z0], [R.x0, h, R.z0], [R.x0, h, R.z1]], [1, 0, 0], -0.6],
+        ['r', [[R.x1, 0, R.z0], [R.x1, 0, R.z1], [R.x1, h, R.z1], [R.x1, h, R.z0]], [-1, 0, 0], -0.2],
+        ['f', [[R.x1, 0, R.z1], [R.x0, 0, R.z1], [R.x0, h, R.z1], [R.x1, h, R.z1]], [0, 0, -1], -0.45],
+      ];
+      for (const [id, pts, n, ang] of walls) planeCrayon(k + id, pts, E.wall, n, { al, p: pW, reach: E.reach, angle: ang });
+      planeCrayon(k + 'fl', [[R.x0, 0, R.z1], [R.x1, 0, R.z1], [R.x1, 0, R.z0], [R.x0, 0, R.z0]], 'floor', [0, 1, 0],
+        { al, p: pF, reach: E.reach * 1.15, angle: S.screenAngle([0, 0, -60], [0, 0, 1]) + 0.12, w: 0.9 });
     });
-    // звезда
-    const st = [];
-    for (let i = 0; i <= 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, r = i % 2 ? 11 : 27; st.push([x + Math.cos(a) * r, top - 12 + Math.sin(a) * r]); }
-    const pS = seg(p, 0.55, 0.85);
-    P.volume(P.polyShape(st, { round: 0.7 }), { key: key + ':starV', color: 'fur', alpha: al, p: pS, w: 0.4, shine: 1.3, noCore: true });
-    stroke(ctx, st, { key: key + ':star', w: 2.2, alpha: al, p: pS });
-    // шары
-    [[-40, 120, 'a1'], [55, 175, 'warm'], [-85, 270, 'fur'], [70, 300, 'a1'], [-20, 330, 'warm'], [-95, 395, 'a1'], [120, 410, 'fur'], [10, 220, 'a1']].forEach(([dx, dy, c], i) => {
-      const bp = seg(p, 0.6 + i * 0.04, 0.8 + i * 0.03);
-      if (bp <= 0) return;
-      const poly = ellipsePoly(x + dx, top + dy, 14, 14, 0, 16);
-      knock(ctx, [poly], al * bp);
-      P.volume(P.ellShape(x + dx, top + dy, 14, 14), { key: key + ':bV' + i, color: c, alpha: al * bp, w: 0.35, shine: 1.4, lightAt: 0.75 });
-      stroke(ctx, ellipsePts(x + dx, top + dy, 14, 14, 0, key + 'b' + i), { key: key + ':b' + i, closed: true, w: 2, alpha: al, p: bp });
-    });
-  }
-  function drawGift(ctx, key, x, p, al) {
-    if (al <= 0.004 || p <= 0) return;
-    const G = GROUND, w = 92, h = 70;
-    const box = [[x - w / 2, G], [x - w / 2, G - h], [x + w / 2, G - h], [x + w / 2, G]];
-    const top = [[x - w / 2, G - h], [x - w / 2 + 22, G - h - 20], [x + w / 2 + 22, G - h - 20], [x + w / 2, G - h]];
-    const side = [[x + w / 2, G], [x + w / 2, G - h], [x + w / 2 + 22, G - h - 20], [x + w / 2 + 22, G - 20]];
-    P.castShadow(x + 10, G, 70, 12, { key: key + ':cast', alpha: al * p, h: 60 });
-    knock(ctx, [box, top, side], al * p);
-    P.volume(P.polyShape(box, { normal: [0, 0, 1] }), { key: key + ':fV', color: 'a1', alpha: al, p, w: 0.6, noCore: true });
-    P.volume(P.polyShape(top, { normal: [0, -1, 0.6] }), { key: key + ':tV', color: 'a1', alpha: al, p, w: 0.5, noCore: true });
-    P.volume(P.polyShape(side, { normal: [1, 0, 0.5] }), { key: key + ':sV', color: 'a1', alpha: al, p, w: 0.5, noCore: true });
-    for (const pl of [box, top, side]) stroke(ctx, pl, { key: key + ':g' + pl[1][0], closed: true, w: 2.2, alpha: al, p });
-    stroke(P.L.color, [[x - 6, G], [x - 6, G - h], [x + 16, G - h - 20]], { key: key + ':r1', color: 'fur', w: 6, alpha: al, p: seg(p, 0.4, 1), sketch: false });
-    stroke(P.L.color, [[x - w / 2, G - h * 0.55], [x + w / 2, G - h * 0.55], [x + w / 2 + 22, G - h * 0.55 - 20]], { key: key + ':r2', color: 'fur', w: 6, alpha: al, p: seg(p, 0.5, 1), sketch: false });
-    for (const d of [-1, 1]) stroke(ctx, curve([[x + 5, G - h - 10], [x + 5 + d * 30, G - h - 36], [x + 5 + d * 8, G - h - 16]], false, 6), { key: key + ':bow' + d, color: 'fur:dk', w: 3, alpha: al, p: seg(p, 0.6, 1) });
-  }
-  function drawWindow(ctx, key, x0, y0, x1, y1, p, al, o = {}) {
-    if (al <= 0.004 || p <= 0) return;
-    const L = P.L;
-    const pf = seg(p, 0, 0.6), pd = seg(p, 0.4, 1);
-    const in0 = 16;
-    const glass = P.rectShape(x0 + in0, y0 + in0, x1 - in0, y1 - in0);
-    // небо или зимняя белизна за стеклом
-    P.crayon(L.color, glass, { key: key + ':sky', color: o.frost ? 'wallA' : 'a1', alpha: (o.frost ? 0.32 : 0.28) * al, w: 12, gap: 8, angle: -0.3, p: pd, still: true, world: true, maxLen: 90 });
-    P.crayon(L.light, glass, { key: key + ':skyL', color: 'light', alpha: 0.55 * al, w: 12, gap: 9, angle: -0.3, p: pd, still: true, world: true, maxLen: 70, cond: (n, x, y) => y > y0 + (y1 - y0) * 0.5 || (o.frost && (x - x0) + (y1 - y) < 170) });
-    if (o.sun) {
-      const sx = x1 - 70, sy = y0 + 72;
-      const sp = ellipsePoly(sx, sy, 34, 34, 0, 20);
-      knock(ctx, [sp], al * pd);
-      P.crayon(L.color, P.ellShape(sx, sy, 34, 34), { key: key + ':sunF', color: 'fur', alpha: 0.75 * al, w: 8, gap: 5, angle: -0.6, p: pd });
-      P.crayon(L.light, P.ellShape(sx - 8, sy - 8, 20, 20), { key: key + ':sunL', color: 'light', alpha: 0.8 * al, w: 6, gap: 5, angle: 0.4, p: pd });
-      stroke(ctx, ellipsePts(sx, sy, 34, 34, 0, key + 'sun'), { key: key + ':sun', closed: true, color: 'fur:dk', w: 2.2, alpha: al, p: pd });
-      for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4 + 0.2; stroke(L.color, [[sx + Math.cos(a) * 46, sy + Math.sin(a) * 46], [sx + Math.cos(a) * 66, sy + Math.sin(a) * 66]], { key: key + ':ray' + i, color: 'fur', w: 4, alpha: al * pd, sketch: false }); }
-    }
-    // рама — крашеное дерево
-    const bars = [[x0, y0, x1, y0 + in0], [x0, y1 - in0, x1, y1], [x0, y0, x0 + in0, y1], [x1 - in0, y0, x1, y1]];
-    const mx = (x0 + x1) / 2, my = y0 + (y1 - y0) * 0.38;
-    bars.push([mx - 5, y0 + in0, mx + 5, y1 - in0], [x0 + in0, my - 5, x1 - in0, my + 5]);
-    bars.forEach((b, i) => P.volume(P.rectShape(b[0], b[1], b[2], b[3], [0, -0.2, 1]), { key: key + ':bar' + i, color: 'cream', alpha: al, p: pf, still: true, noCore: true, w: 0.5 }));
-    stroke(ctx, [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], { key: key + ':fo', closed: true, w: 2.8, alpha: al, p: pf });
-    stroke(ctx, [[x0 + in0, y0 + in0], [x1 - in0, y0 + in0], [x1 - in0, y1 - in0], [x0 + in0, y1 - in0]], { key: key + ':fi', closed: true, w: 2, alpha: al, p: pf });
-    stroke(ctx, [[mx, y0 + in0], [mx, y1 - in0]], { key: key + ':mv', w: 2.2, alpha: al, p: pd });
-    stroke(ctx, [[x0 + in0, my], [x1 - in0, my]], { key: key + ':mh', w: 2.2, alpha: al, p: pd });
-    // подоконник
-    const sill = [[x0 - 24, y1 + 4], [x1 + 24, y1 + 4], [x1 + 24, y1 + 22], [x0 - 24, y1 + 22]];
-    P.volume(P.polyShape(sill, { normal: [0, -0.6, 1] }), { key: key + ':sillV', color: 'cream', alpha: al, p: pd, still: true, noCore: true, w: 0.5 });
-    P.crayon(L.color, P.rectShape(x0 - 20, y1 + 22, x1 + 20, y1 + 34), { key: key + ':sillS', color: 'shadow', alpha: 0.3 * al, w: 8, gap: 5, angle: 0.05, p: pd, still: true });
-    stroke(ctx, sill, { key: key + ':sill', closed: true, w: 2.2, alpha: al, p: pd });
-    if (o.frost) {
-      const r = P.staticRng(key + ':fr');
-      for (let i = 0; i < 9; i++) {
-        const cx = x0 + 40 + r() * (x1 - x0 - 80), cy = y0 + 40 + r() * (y1 - y0 - 80), s = 7 + r() * 9;
-        for (let j = 0; j < 3; j++) { const a = j * Math.PI / 3 + r(); stroke(L.light, [[cx - Math.cos(a) * s, cy - Math.sin(a) * s], [cx + Math.cos(a) * s, cy + Math.sin(a) * s]], { key: key + ':sf' + i + j, color: 'light', w: 2.2, alpha: al * pd, sketch: false, gaps: false }); }
+    S.push(BGD + 9, () => {
+      // доски пола
+      for (let x = R.x0 + 24; x < R.x1; x += 24) S.line(k + 'bd' + x, [[x, 0, R.z0], [x, 0, R.z1]], { w: 1.1, alpha: 0.3 * al, p: pF, sketch: false, color: 'floor:dk' });
+      // обои в полоску (1979)
+      if (E.stripes) {
+        for (let x = R.x0 + 16; x < R.x1; x += 32) S.line(k + 'sp' + x, [[x, 10, R.z0 + 0.3], [x, h, R.z0 + 0.3]], { w: 1.4, alpha: 0.2 * al, p: pW, sketch: false, color: E.wall + ':dk' });
+        for (let z = R.z0 + 16; z < R.z1; z += 32) S.line(k + 'sq' + z, [[R.x0 + 0.3, 10, z], [R.x0 + 0.3, h, z]], { w: 1.4, alpha: 0.2 * al, p: pW, sketch: false, color: E.wall + ':dk' });
       }
-    }
-    if (o.curtains) {
-      for (const sd of [-1, 1]) {
-        const cx = sd < 0 ? x0 - 30 : x1 + 30;
-        const pts = []; for (let i = 0; i <= 12; i++) pts.push([cx + Math.sin(i * 1.3) * 10 * sd, y0 - 30 + i * (y1 - y0 + 50) / 12]);
-        const other = pts.map(([x, y]) => [x - sd * 42, y]);
-        const poly = pts.concat(other.slice().reverse());
-        knock(ctx, [poly], al * pd);
-        P.volume(P.polyShape(poly, { round: 0.9 }), { key: key + ':cuV' + sd, color: 'a1', alpha: al, p: pd, w: 0.55 });
-        for (let f = 1; f < 3; f++) stroke(ctx, pts.map(([x, y]) => [x - sd * 14 * f, y]), { key: key + ':cuf' + sd + f, w: 1.2, alpha: al * 0.4 * pd, sketch: false });
-        stroke(ctx, pts, { key: key + ':cu' + sd, w: 2.2, alpha: al, p: pd });
-        stroke(ctx, other, { key: key + ':cu2' + sd, w: 2, alpha: al * 0.8, p: pd });
-      }
-      stroke(ctx, [[x0 - 90, y0 - 34], [x1 + 90, y0 - 34]], { key: key + ':rod', w: 3, alpha: al, p: pd });
-    }
-    if (o.plant) {
-      const px = x0 + 70, py = y1 + 4;
-      const pot = [[px - 30, py - 50], [px + 30, py - 50], [px + 22, py], [px - 22, py]];
-      [[-26, -110], [-6, -140], [18, -118], [30, -86], [-36, -78]].forEach(([dx, dy], i) => {
-        const tip = [px + dx, py - 50 + dy * 0.9];
-        const leaf = curve([[px, py - 50], [lerp(px, tip[0], 0.5) - 10, lerp(py - 50, tip[1], 0.5)], tip, [lerp(px, tip[0], 0.5) + 10, lerp(py - 50, tip[1], 0.5) + 6], [px, py - 50]], false, 4);
-        knock(ctx, [leaf], al * pd);
-        P.volume(P.polyShape(leaf, { round: 0.8 }), { key: key + ':lfV' + i, color: 'a2', alpha: al, p: pd, w: 0.35, noCore: true });
-        stroke(ctx, leaf, { key: key + ':lf' + i, color: 'line', w: 1.8, alpha: al, p: pd });
+      // плинтус
+      const BB = 9, e = 1.2;
+      const strips = [
+        [[R.x0, 0, R.z0 + e], [R.x1, 0, R.z0 + e], [R.x1, BB, R.z0 + e], [R.x0, BB, R.z0 + e]],
+        [[R.x0 + e, 0, R.z1], [R.x0 + e, 0, R.z0], [R.x0 + e, BB, R.z0], [R.x0 + e, BB, R.z1]],
+        [[R.x1 - e, 0, R.z0], [R.x1 - e, 0, R.z1], [R.x1 - e, BB, R.z1], [R.x1 - e, BB, R.z0]],
+        [[R.x1, 0, R.z1 - e], [R.x0, 0, R.z1 - e], [R.x0, BB, R.z1 - e], [R.x1, BB, R.z1 - e]],
+      ];
+      strips.forEach((q, i) => {
+        S.drawPoly(k + 'bb' + i, q, { color: 'floor:dk', crayon: { w: 8, gap: 5, angle: 0.1, alpha: 0.5 * al }, alpha: al, p: pW, knock: false });
+        S.line(k + 'bbl' + i, [q[3], q[2]], { w: 1.4, alpha: 0.7 * al, p: pW, sketch: false });
       });
-      knock(ctx, [pot], al * pd);
-      P.volume(P.polyShape(pot), { key: key + ':potV', color: 'fur:dk', alpha: al, p: pd, w: 0.5 });
-      stroke(ctx, pot, { key: key + ':pot', closed: true, w: 2.2, alpha: al, p: pd });
-    }
-  }
-  function drawCarpet(ctx, key, x0, y0, x1, y1, p, al) {
-    if (al <= 0.004 || p <= 0) return;
-    const L = P.L;
-    const rect = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
-    P.crayon(L.color, P.rectShape(x0 + 8, y1 + 4, x1 + 12, y1 + 22), { key: key + ':sh', color: 'shadow', alpha: 0.3 * al, w: 9, gap: 5, angle: 0.05, p, still: true });
-    knock(ctx, [rect], al * clamp(p * 3));
-    const pa = seg(p, 0, 0.5), pb = seg(p, 0.3, 1);
-    const b = 30;
-    P.volume(P.polyShape(rect, { normal: [0, 0, 1] }), { key: key + ':V', color: 'warm', alpha: al, p: pb, w: 0.9, still: true, noCore: true, noLight: true });
-    P.crayon(L.color, P.polyShape([[x0 + b, y0 + b], [x1 - b, y0 + b], [x1 - b, y1 - b], [x0 + b, y1 - b]]), { key: key + ':in', color: 'warm:dk', alpha: 0.35 * al, w: 9, gap: 7, angle: 0.5, p: pb, still: true });
-    stroke(ctx, rect, { key: key + ':o', closed: true, w: 2.6, alpha: al, p: pa });
-    stroke(ctx, [[x0 + b, y0 + b], [x1 - b, y0 + b], [x1 - b, y1 - b], [x0 + b, y1 - b]], { key: key + ':i', closed: true, w: 2, alpha: al, p: pa });
-    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-    [[1, 'a1', L.color], [0.62, 'cream', L.light], [0.3, 'fur', L.color]].forEach(([sc, c, lay], i) => {
-      const rw = (x1 - x0 - b * 2) / 2 * sc * 0.92, rh = (y1 - y0 - b * 2) / 2 * sc * 0.92;
-      const dm = [[cx, cy - rh], [cx + rw, cy], [cx, cy + rh], [cx - rw, cy]];
-      knock(ctx, [dm], al * pb * 0.6);
-      P.crayon(lay, P.polyShape(dm), { key: key + ':dh' + i, color: c, alpha: 0.6 * al, w: 8, gap: 6, angle: i % 2 ? 0.8 : -0.8, p: pb, still: true });
-      stroke(ctx, dm, { key: key + ':d' + i, closed: true, w: 2, alpha: al, p: pb });
+      // рёбра комнаты
+      const C = [[R.x0, 0, R.z0], [R.x1, 0, R.z0], [R.x1, 0, R.z1], [R.x0, 0, R.z1]];
+      for (let i = 0; i < 4; i++) {
+        const a = C[i], b = C[(i + 1) % 4];
+        S.line(k + 'ef' + i, [a, b], { w: 2.4, alpha: 0.85 * al, p: pL });
+        S.line(k + 'ec' + i, [[a[0], h, a[2]], [b[0], h, b[2]]], { w: 2, alpha: 0.55 * al, p: pL });
+        S.line(k + 'ev' + i, [a, [a[0], h, a[2]]], { w: 2, alpha: 0.75 * al, p: pL });
+      }
     });
-    for (let x = x0 + 8; x < x1; x += 14) {
-      stroke(ctx, [[x, y1], [x + 1, y1 + 16]], { key: key + ':fb' + x, w: 1.3, alpha: al * 0.7 * pb, sketch: false, gaps: false });
-      stroke(ctx, [[x, y0], [x - 1, y0 - 14]], { key: key + ':ft' + x, w: 1.3, alpha: al * 0.7 * pb, sketch: false, gaps: false });
-    }
+    if (E.sun) S.push(BGD + 8.5, () => sunPatch(k, al, seg(p, 0.5, 1)));
+    S.push(BGD + 8, () => {
+      windowBack(E, k, al, p);
+      if (E.carpet) carpet(k, al, p);
+      door(E, k, al, p, o.door || 'closed');
+    });
+    if (E.curtain) S.push(BGD + 7.5, () => curtains(E, k, al, p));
+    if (E.lamp) lamp(k + 'lm', E.lamp, al, seg(p, 0.4, 1));
   }
-  function drawWallpaper(ctx, key, p, al, skip) {
-    if (al <= 0.004 || p <= 0) return;
-    for (let x = 70, i = 0; x < 1880; x += 76, i++) {
-      if (skip && x > skip[0] && x < skip[1]) continue;
-      stroke(P.L.color, [[x, 60], [x + 2, GROUND - 26]], { key: key + ':wp' + i, color: 'wallB:sh', w: 4, alpha: al * 0.3, p: seg(p, i / 40, 1), sketch: false });
-      for (let y = 120; y < GROUND - 60; y += 130) {
-        const yy = y + (i % 2) * 65;
-        P.crayon(P.L.light, P.ellShape(x + 38, yy, 4.5, 4.5), { key: key + ':wf' + i + '_' + y, color: 'wallB:lt', alpha: 0.45 * al * p, w: 3.5, gap: 3, still: true });
+  // окно на задней стене
+  function windowBack(E, k, al, p) {
+    const z = ROOM.z0 + 0.6, w = WIN, pq = seg(p, 0.3, 0.9);
+    if (pq <= 0) return;
+    const glass = [[w.x0, w.y0, z], [w.x1, w.y0, z], [w.x1, w.y1, z], [w.x0, w.y1, z]];
+    S.drawPoly(k + 'gl', glass, { color: E.sky, crayon: { w: 12, gap: 8, angle: -0.6, alpha: 0.55 * al }, alpha: al, p: pq });
+    S.drawPoly(k + 'gl2', glass, { color: 'light', crayon: { w: 10, gap: 9, angle: 0.5, alpha: 0.6 * al }, alpha: al, p: pq, knock: false });
+    if (E.frost) { // морозные узоры
+      const r = P.staticRng(k + 'frost');
+      for (let i = 0; i < 10; i++) {
+        const x0 = lerp(w.x0, w.x1, r()), dir = r() < 0.5 ? 1 : -1, pts = [];
+        for (let j = 0; j <= 6; j++) pts.push([x0 + dir * j * 4 + Math.sin(j * 1.3 + i) * 3, w.y0 + 2 + j * (5 + r() * 4), z + 0.3]);
+        S.line(k + 'fr' + i, pts, { ctx: P.L.color, color: 'light', w: 3, alpha: 0.9 * al, p: pq, sketch: false });
       }
     }
+    const fw = 5, xm = (w.x0 + w.x1) / 2, ym = w.y0 + (w.y1 - w.y0) * 0.66, zf = z + 0.5;
+    const bar = (id, x0, y0, x1, y1) => S.drawPoly(k + 'wf' + id, [[x0, y0, zf], [x1, y0, zf], [x1, y1, zf], [x0, y1, zf]], { color: 'cream', crayon: { w: 6, gap: 4, angle: 0.3, alpha: 0.75 * al }, alpha: al, p: pq, line: true, lw: 1.5 });
+    bar('t', w.x0 - fw, w.y1, w.x1 + fw, w.y1 + fw); bar('b', w.x0 - fw, w.y0 - fw, w.x1 + fw, w.y0);
+    bar('l', w.x0 - fw, w.y0, w.x0, w.y1); bar('r', w.x1, w.y0, w.x1 + fw, w.y1);
+    bar('v', xm - 2.5, w.y0, xm + 2.5, w.y1); bar('h', w.x0, ym - 2.5, w.x1, ym + 2.5);
+    cuboidNow(k + 'sill', [xm, w.y0 - fw - 2, ROOM.z0 + 9], frame(0), [w.x1 - w.x0 + 34, 4, 18], 'cream', { al, p: pq });
   }
-  function drawYarn(ctx, key, c, r, p, al) {
-    if (al <= 0.004 || p <= 0) return;
-    const poly = ellipsePoly(c[0], c[1], r, r, 0, 20);
-    knock(ctx, [poly], al * p);
-    P.volume(P.ellShape(c[0], c[1], r, r), { key: key + ':yV', color: 'a2', alpha: al * p, w: 0.4, shine: 0.9 });
-    stroke(ctx, ellipsePts(c[0], c[1], r, r, 0, key + 'y'), { key: key + ':y', closed: true, w: 2.2, alpha: al, p });
-    for (let i = 0; i < 3; i++) stroke(ctx, arcPts(c[0] + (i - 1) * r * 0.3, c[1], r * 0.7, r * 0.95, -1.2 + i * 0.2, 1.4 + i * 0.2, 8), { key: key + ':ya' + i, color: 'a2:dk', w: 1.6, alpha: al * p, sketch: false });
-    stroke(ctx, [[c[0] - r * 1.4, c[1] - r * 1.5], [c[0] + r * 0.4, c[1] + r * 0.2]], { key: key + ':n1', w: 2.2, alpha: al * p, sketch: false });
-    stroke(ctx, [[c[0] + r * 1.3, c[1] - r * 1.6], [c[0] - r * 0.2, c[1] + r * 0.1]], { key: key + ':n2', w: 2.2, alpha: al * p, sketch: false });
+  // солнечное пятно на полу с тенью переплёта
+  function sunPatch(k, al, p) {
+    if (p <= 0) return;
+    const w = WIN, d = [0.25, -0.7, 1];
+    const fl = (x, y) => { const t = y / 0.7; return [x + d[0] * t, 0.3, ROOM.z0 + t]; };
+    const quad = [fl(w.x0, w.y0), fl(w.x1, w.y0), fl(w.x1, w.y1), fl(w.x0, w.y1)];
+    S.drawPoly(k + 'sun', quad, { color: 'light', crayon: { w: 14, gap: 9, angle: 0.2, alpha: 0.55 * al }, alpha: al, p, knock: false });
+    S.drawPoly(k + 'sun2', quad, { color: 'wallB:lt', crayon: { w: 12, gap: 10, angle: 0.9, alpha: 0.25 * al }, alpha: al, p, knock: false });
+    const xm = (w.x0 + w.x1) / 2, ym = w.y0 + (w.y1 - w.y0) * 0.66;
+    S.line(k + 'sb1', [fl(xm, w.y0), fl(xm, w.y1)], { ctx: P.L.color, w: 6, alpha: 0.3 * al, p, color: 'floor:sh', sketch: false });
+    S.line(k + 'sb2', [fl(w.x0, ym), fl(w.x1, ym)], { ctx: P.L.color, w: 6, alpha: 0.3 * al, p, color: 'floor:sh', sketch: false });
   }
-
-  // ---- картонная коробка «игрушки»
-  const BOXD = { w: 240, h: 170, dx: 38, dy: -44 };
-  function boxGeo(bx, lid, open) {
-    const G = GROUND, w = BOXD.w, h = BOXD.h, dx = BOXD.dx, dy = BOXD.dy;
-    const fl = [bx - w / 2, G - h], fr = [bx + w / 2, G - h], bl = [bx - w / 2 + dx, G - h + dy], br = [bx + w / 2 + dx, G - h + dy];
-    const L = (a, b, k) => lerp(a, b, k);
-    const ff = [L(-22, 19, lid) - open * 20, L(-82, -22, lid) + open * 10];
-    const bf = [L(10, -19, lid), L(-86, 22, lid) - open * 10];
-    const lf = [L(-70, 112, lid) - open * 20, L(-40, 0, lid)];
-    const rf = [L(70, -112, lid) + open * 20, L(-40, 0, lid)];
-    const quad = (a, b, v) => [a, b, [b[0] + v[0], b[1] + v[1]], [a[0] + v[0], a[1] + v[1]]];
-    return {
-      front: [[bx - w / 2, G], fl, fr, [bx + w / 2, G]],
-      side: [fr, br, [br[0], G + dy], [bx + w / 2, G]],
-      top: [fl, fr, br, bl],
-      flapF: quad(fl, fr, ff), flapB: quad(bl, br, bf), flapL: quad(fl, bl, lf), flapR: quad(fr, br, rf),
-      center: [bx + dx / 2, G - h + dy / 2], mid: [bx + dx / 2, G - h / 2], bx,
-    };
+  function curtains(E, k, al, p) {
+    const z = ROOM.z0 + 3, w = WIN, pq = seg(p, 0.4, 1);
+    if (pq <= 0) return;
+    for (const [id, x0, x1] of [['l', w.x0 - 48, w.x0 + 6], ['r', w.x1 - 6, w.x1 + 48]]) {
+      S.drawPoly(k + 'ct' + id, [[x0, 55, z], [x1, 55, z], [x1, 248, z], [x0, 248, z]], { color: E.curtain, crayon: { w: 10, gap: 6, angle: 1.45, alpha: 0.7 * al }, alpha: al, p: pq, line: true, lw: 1.6 });
+      for (let i = 1; i < 4; i++) { const xx = lerp(x0, x1, i / 4); S.line(k + 'cf' + id + i, [[xx, 248, z], [xx + 2, 150, z], [xx - 1, 56, z]], { w: 1.4, alpha: 0.5 * al, p: pq, color: E.curtain + ':dk' }); }
+    }
+    S.line(k + 'rod', [[w.x0 - 60, 252, z + 1], [w.x1 + 60, 252, z + 1]], { w: 3, alpha: al, p: pq });
   }
-  const FLAPN = { flapF: [0, -0.7, 0.8], flapB: [0, -0.4, 1], flapL: [-0.7, -0.4, 0.6], flapR: [0.7, -0.4, 0.6] };
-  function drawFlap(ctx, key, g, f, p, al) {
-    knock(ctx, [g[f]], al * clamp(p * 3));
-    P.volume(P.polyShape(g[f], { normal: FLAPN[f] }), { key: key + ':' + f + 'V', color: 'cardboard', alpha: al, p, w: 0.6, noCore: true });
-    stroke(ctx, g[f], { key: key + ':' + f, closed: true, w: 2.2, alpha: al, p });
+  // дверь в правой стене: открытый проём (1956) или закрытая дверь, наличник
+  function door(E, k, al, p, mode) {
+    const x = ROOM.x1 - 0.6, D = DOOR, pq = seg(p, 0.25, 0.9);
+    if (pq <= 0) return;
+    const opening = [[x, 0, D.z0], [x, 0, D.z1], [x, D.h, D.z1], [x, D.h, D.z0]];
+    if (mode === 'open') {
+      const poly = S.drawPoly(k + 'hole', opening, { color: E.wall + ':sh', crayon: { w: 12, gap: 6, angle: 0.9, alpha: 0.8 * al }, alpha: al, p: pq });
+      if (poly) P.hatch(P.L.graphite, poly, { key: k + 'hh', alpha: 0.3 * al, gap: 8, angle: 1.0, p: pq });
+    } else {
+      S.drawPoly(k + 'leaf', opening, { color: 'cream', crayon: { w: 12, gap: 8, angle: 1.1, alpha: 0.5 * al }, alpha: al, p: pq });
+      [[18, 95], [110, 190]].forEach(([a, b], i) => {
+        const q = [[x - 0.3, a, D.z0 + 12], [x - 0.3, a, D.z1 - 12], [x - 0.3, b, D.z1 - 12], [x - 0.3, b, D.z0 + 12]];
+        S.line(k + 'pan' + i, q.concat([q[0]]), { w: 1.5, alpha: 0.55 * al, p: pq, sketch: false });
+      });
+      S.drawEll(k + 'knob', [x - 3, 100, D.z1 - 11], frame(0), [2.6, 2.6, 2.6], { color: 'wallB', alpha: al, p: pq, lw: 1.3, shade: { noCore: true, shine: 1.3 } });
+    }
+    const xc = ROOM.x1 - 1.4, c = D.c;
+    const q = (z0, z1, y0, y1) => [[xc, y0, z0], [xc, y0, z1], [xc, y1, z1], [xc, y1, z0]];
+    [q(D.z0 - c, D.z0, 0, D.h + c), q(D.z1, D.z1 + c, 0, D.h + c), q(D.z0, D.z1, D.h, D.h + c)].forEach((pts, i) =>
+      S.drawPoly(k + 'cs' + i, pts, { color: 'cream', crayon: { w: 7, gap: 5, angle: 1.2, alpha: 0.7 * al }, alpha: al, p: pq, line: true, lw: 1.7 }));
   }
-  function drawBoxBack(ctx, key, g, p, al, lid) {
-    if (al <= 0.004 || p <= 0) return;
-    P.castShadow(g.bx + 30, GROUND, 170, 22, { key: key + ':cast', alpha: al * p, h: 120 });
-    if (lid < 0.5) {
-      P.crayon(P.L.color, P.polyShape(g.top), { key: key + ':inC', color: 'shadow', alpha: 0.6 * al, w: 9, gap: 5, angle: -0.6, p });
-      hatch(ctx, g.top, { key: key + ':inH', color: 'line', alpha: 0.35 * al, p, gap: 4, angle: 0.6 });
-      for (const f of ['flapB', 'flapL']) drawFlap(ctx, key, g, f, p, al);
+  // отметки роста на наличнике; подписи — на полотне двери
+  function doorMarks(t, list, al = 1) {
+    if (al <= 0.004) return;
+    S.push(BGD + 6, () => {
+      const G = P.L.graphite, x = ROOM.x1 - 2.4, z0 = DOOR.z1 - 1.5, z1 = DOOR.z1 + DOOR.c + 1.5;
+      for (const [g, done] of list) {
+        if (!done && t < g.grow[0]) continue;
+        g.ages.forEach((age, i) => {
+          const tc = ageCross(g, age);
+          const pr = done ? 1 : seg(t, tc, tc + 0.22);
+          if (pr <= 0) return;
+          const y = F.heightOf(g.spec, age);
+          S.line('mk' + g.key + age, [[x, y, z0], [x, y + 0.4, z1]], { w: 3.2, alpha: al, p: pr, sketch: false, gaps: false, color: g.color });
+          const a = S.proj([x, y, DOOR.z1 - 3]), b = S.proj([x, y, DOOR.z1 - 30]);
+          if (!a || !b) return;
+          const size = clamp(a[3] * 4.4, 13, 38), dir = b[0] < a[0] ? -1 : 1;
+          const last = i === g.ages.length - 1 && (done || t > g.grow[1] - 0.2);
+          if (done && !last) return;
+          const txt = done ? g.name : String(g.born + age) + (last ? ' ' + g.name : '');
+          write(G, txt, a[0] + dir * size * 0.15, a[1] + size * 0.32, { key: 'mt' + g.key + age + (last ? 'n' : ''), size, p: pr, alpha: al * 0.95, color: g.color, align: dir < 0 ? 'right' : 'left', weight: 500 });
+        });
+      }
+    });
+  }
+  // ковёр на стене (1979)
+  function carpet(k, al, p) {
+    const x = ROOM.x0 + 0.8, z0 = -330, z1 = -90, y0 = 70, y1 = 205, pq = seg(p, 0.3, 0.9);
+    if (pq <= 0) return;
+    const quad = [[x, y0, z1], [x, y0, z0], [x, y1, z0], [x, y1, z1]];
+    S.drawPoly(k + 'cp', quad, { color: 'warm:dk', crayon: { w: 10, gap: 6, angle: 0.8, alpha: 0.75 * al }, alpha: al, p: pq, line: true, lw: 1.8 });
+    const xi = x + 0.3, m = 12;
+    const inner = [[xi, y0 + m, z1 - m], [xi, y0 + m, z0 + m], [xi, y1 - m, z0 + m], [xi, y1 - m, z1 - m]];
+    S.line(k + 'cpb', inner.concat([inner[0]]), { ctx: P.L.color, color: 'wallB', w: 5, alpha: 0.8 * al, p: pq, sketch: false });
+    const zc = (z0 + z1) / 2, yc = (y0 + y1) / 2;
+    for (const [s, role] of [[1, 'wallB'], [0.5, 'a1']]) {
+      const dm = [[xi, yc - 50 * s, zc], [xi, yc, zc - 85 * s], [xi, yc + 50 * s, zc], [xi, yc, zc + 85 * s]];
+      S.line(k + 'cpd' + s, dm.concat([dm[0]]), { ctx: P.L.color, color: role, w: 5, alpha: 0.8 * al, p: pq, sketch: false });
+    }
+    for (let i = 0; i <= 12; i++) {
+      const z = lerp(z0 + 4, z1 - 4, i / 12);
+      S.line(k + 'fa' + i, [[x, y0, z], [x, y0 - 6, z]], { w: 1, alpha: 0.5 * al, p: pq, sketch: false, gaps: false });
+      S.line(k + 'fb' + i, [[x, y1, z], [x, y1 + 6, z]], { w: 1, alpha: 0.5 * al, p: pq, sketch: false, gaps: false });
     }
   }
-  function drawBoxFront(ctx, key, g, p, al, lid, label) {
+  // торшер (1979): он же источник света
+  function lamp(k, base, al, p) {
+    if (p <= 0 || al <= 0.004) return;
+    const top = add(base, [0, 150, 0]);
+    S.push(S.depth(add(base, [0, 90, 0])), () => {
+      S.drawEll(k + 'b', add(base, [0, 2, 0]), frame(0), [15, 2.5, 15], { color: 'hairDark', alpha: al, p, lw: 1.5, shade: { noCore: true } });
+      S.drawTube(k + 'p', [add(base, [0, 3, 0]), top], [1.4, 1.2], { color: 'hairDark', alpha: al, p, lw: 1.4, shade: { noCore: true } });
+      const lo = S.ringScreen(add(base, [0, 146, 0]), [28, 0, 0], [0, 0, 28], 18), hi = S.ringScreen(add(base, [0, 182, 0]), [16, 0, 0], [0, 0, 16], 18);
+      if (lo.length < 6 || hi.length < 6) return;
+      const shade = S.hull(lo.concat(hi));
+      S.knock([shade], al);
+      P.volume(P.polyShape(shade), { key: k + 's', color: 'wallB:lt', alpha: al, p, light: [0, 0, 1], w: 0.6, noCore: true, shine: 1.3, lightAt: 0.5 });
+      P.stroke(P.L.graphite, shade, { key: k + 'so', closed: true, w: 1.8, alpha: al, p });
+      P.stroke(P.L.graphite, lo, { key: k + 'sr', closed: true, w: 1.3, alpha: al * 0.6, p, sketch: false });
+    });
+  }
+  // ёлка (1956): ярусы-конусы, шары, звезда
+  const TIERS = [[26, 102, 64], [70, 140, 52], [110, 176, 40], [148, 214, 27]];
+  const ORN = ['a1', 'wallB', 'light', 'a1:dk'];
+  function tree(k, base, al, p) {
     if (al <= 0.004 || p <= 0) return;
-    knock(ctx, [g.front, g.side], al * clamp(p * 3));
-    P.volume(P.polyShape(g.front, { normal: [0, 0, 1] }), { key: key + ':fV', color: 'cardboard', alpha: al, p, w: 0.9, noCore: true });
-    P.volume(P.polyShape(g.side, { normal: [0.85, 0, 0.5] }), { key: key + ':sV', color: 'cardboard', alpha: al, p, w: 0.8 });
-    stroke(ctx, g.front, { key: key + ':f', closed: true, w: 2.6, alpha: al, p });
-    stroke(ctx, g.side, { key: key + ':s', closed: true, w: 2.4, alpha: al, p });
-    // скотч
-    stroke(P.L.light, [[g.front[1][0] + 100, g.front[1][1]], [g.front[1][0] + 100, g.front[1][1] + 46]], { key: key + ':tape', color: 'cream', w: 14, alpha: al * 0.7 * p, sketch: false });
-    const flaps = lid < 0.5 ? ['flapR', 'flapF'] : ['flapL', 'flapR', 'flapB', 'flapF'];
-    for (const f of flaps) drawFlap(ctx, key + '2', g, f, p, al);
-    if (label) write(ctx, 'игрушки', g.front[0][0] + 34, g.front[0][1] - 62, { key: key + ':lbl', size: 46, alpha: al * label, p: label, rot: -0.04 });
+    const d0 = S.depth(add(base, [0, 100, 0]));
+    S.push(d0 + 5, () => {
+      S.drawTube(k + 'pot', [base, add(base, [0, 26, 0])], [19, 16], { color: 'a1:sh', alpha: al, p: seg(p, 0, 0.3), lw: 2, shade: { noCore: true } });
+      S.drawTube(k + 'tr', [add(base, [0, 24, 0]), add(base, [0, 40, 0])], [5, 4.5], { color: 'fur:dk', alpha: al, p: seg(p, 0, 0.3), lw: 1.6, capB: false });
+    });
+    TIERS.forEach(([y0, y1, r], i) => {
+      const pT = seg(p, 0.15 + i * 0.12, 0.5 + i * 0.12);
+      const c = add(base, [0, y0, 0]), apex = add(base, [0, y1, 0]);
+      S.push(d0 - i * 0.5, () => {
+        if (pT <= 0) return;
+        const ring = S.ringScreen(c, [r, 0, 0], [0, 0, r], 20);
+        const ap = S.proj(apex);
+        if (ring.length < 8 || !ap) return;
+        const poly = S.hull(ring.concat([[ap[0], ap[1]]]));
+        const l = S.lightS(add(base, [0, (y0 + y1) / 2, 0]));
+        S.knock([poly], al * clamp(pT * 3));
+        P.volume(P.polyShape(poly, { round: 0.95 }), { key: k + 'v' + i, color: 'a2', alpha: al, p: pT, light: l, w: 0.75, shine: 0.6, angle: -1.2 });
+        const edge = [];
+        for (let j = 0; j <= 28; j++) {
+          const a = (j / 28) * PI * 2, rr = r * (j % 2 ? 1.06 : 0.9);
+          const q = [c[0] + Math.sin(a) * rr, c[1] + (j % 2 ? -3 : 3), c[2] + Math.cos(a) * rr];
+          if (dot([Math.sin(a), 0, Math.cos(a)], S.toViewer(q)) > -0.05) { const s = S.proj(q); if (s) edge.push([s[0], s[1]]); }
+        }
+        if (edge.length > 2) P.stroke(P.L.graphite, edge, { key: k + 'e' + i, w: 1.8, alpha: al, p: pT });
+        P.stroke(P.L.graphite, poly, { key: k + 'o' + i, closed: true, w: 1.6, alpha: al * 0.55, p: pT, wAt: S.weightFn(poly, l) });
+      });
+      for (let j = 0; j < 4; j++) {
+        const a = j * 1.57 + i * 0.8, hh = lerp(y0, y1, 0.22), rr = r * 0.78 + 3;
+        const q = add(base, [Math.sin(a) * rr, hh, Math.cos(a) * rr]);
+        const n = norm([Math.sin(a), 0.3, Math.cos(a)]);
+        S.push(d0 - i * 0.5 - 0.2, () => {
+          if (dot(n, S.toViewer(q)) < 0.15) return;
+          S.drawEll(k + 'b' + i + j, q, frame(0), [4.5, 4.5, 4.5], { color: ORN[(i + j) % 4], alpha: al, p: seg(p, 0.7, 1), lw: 1.3, shade: { noCore: true, shine: 1.4, lightAt: 0.7 } });
+        });
+      }
+    });
+    S.push(d0 - 3, () => {
+      const s = S.proj(add(base, [0, TIERS[3][1] + 7, 0]));
+      if (!s) return;
+      const R = 9 * s[3], pts = [];
+      for (let i = 0; i < 10; i++) { const a = -PI / 2 + i * PI / 5, rr = i % 2 ? R * 0.45 : R; pts.push([s[0] + Math.cos(a) * rr, s[1] + Math.sin(a) * rr]); }
+      const ps = seg(p, 0.8, 1);
+      S.knock([pts], al * ps);
+      P.crayon(P.L.color, P.polyShape(pts), { key: k + 'st', color: 'wallB', alpha: 0.9 * al * ps, w: 4, gap: 3 });
+      P.stroke(P.L.graphite, pts, { key: k + 'sto', closed: true, w: 1.6, alpha: al, p: ps });
+    });
+  }
+  // стол и табурет
+  function table(k, al = 1) {
+    const fr = frame(TABLE.yaw), c = [TABLE.c[0], TABLE.h - 2, TABLE.c[1]];
+    cuboid(k + 'top', c, fr, [TABLE.w, 4, TABLE.d], 'floor:dk', { al });
+    for (const [sx, sz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      const a = at(c, fr, sx * (TABLE.w / 2 - 6), -2, sz * (TABLE.d / 2 - 6));
+      S.push(S.depth(a) + 1, () => S.drawTube(k + 'leg' + sx + sz, [a, [a[0], 0, a[2]]], [2.6, 2.2], { color: 'floor:dk', alpha: al, lw: 1.5, shade: { noCore: true } }));
+    }
+  }
+  function stool(k, c, al = 1) {
+    const seat = [c[0], 63, c[1]];
+    cuboid(k + 'seat', seat, frame(0.2), [42, 6, 36], 'floor:dk', { al });
+    for (const [sx, sz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      const a = at(seat, frame(0.2), sx * 16, -3, sz * 13);
+      S.push(S.depth(a) + 1, () => S.drawTube(k + 'leg' + sx + sz, [a, [a[0], 0, a[2]]], [2.2, 2], { color: 'floor:dk', alpha: al, lw: 1.4, shade: { noCore: true } }));
+    }
   }
 
-  // ---- чердак
-  function drawAttic(ctx, key, p, al) {
-    if (al <= 0.004 || p <= 0) return;
-    const L = P.L;
-    const pa = seg(p, 0, 0.6), pb = seg(p, 0.3, 1);
-    const st = { still: true, world: true, p: pa, step: 7, jitter: 14 };
-    // стены под крышей и пол — холодный тёмный мелок
-    P.crayon(L.color, P.polyShape([[-160, 1040], [960, 36], [2080, 1040]]), Object.assign({}, st, { key: key + ':w', color: 'wallA:sh', alpha: 0.42 * al, w: 18, gap: 11, angle: -0.4, maxLen: 200 }));
-    P.crayon(L.color, P.rectShape(-200, GROUND, 2120, 1300), Object.assign({}, st, { key: key + ':fl', color: 'floor:sh', alpha: 0.5 * al, w: 16, gap: 10, angle: 0.02, maxLen: 260 }));
-    // балки — дерево с объёмом
-    const beams = [[[-160, 1040], [960, 36], [960, 110], [-60, 1040]], [[960, 36], [2080, 1040], [1980, 1040], [960, 110]]];
-    beams.forEach((bm, i) => P.volume(P.polyShape(bm, { normal: [i ? -0.4 : 0.4, 0.3, 1] }), { key: key + ':rb' + i, color: 'floor', alpha: al, p: pa, still: true, w: 0.7, noLight: true }));
-    P.volume(P.rectShape(410, 520, 1510, 552, [0, -0.3, 1]), { key: key + ':beamV', color: 'floor', alpha: al, p: pb, still: true, w: 0.6 });
-    P.volume(P.rectShape(960, 120, 990, GROUND, [0.2, 0, 1]), { key: key + ':postV', color: 'floor', alpha: al, p: pb, still: true, w: 0.6 });
-    stroke(ctx, [[-160, 1040], [960, 36], [2080, 1040]], { key: key + ':roof', w: 3, alpha: al, p: pa });
-    stroke(ctx, [[-60, 1040], [960, 120], [1980, 1040]], { key: key + ':roof2', w: 2.4, alpha: al, p: pa });
-    stroke(ctx, [[420, 520], [1500, 520]], { key: key + ':beam', w: 2.6, alpha: al, p: pb });
-    stroke(ctx, [[410, 552], [1510, 552]], { key: key + ':beam2', w: 2.2, alpha: al, p: pb });
-    stroke(ctx, [[960, 120], [960, GROUND]], { key: key + ':post', w: 2.4, alpha: al, p: pb });
-    stroke(ctx, [[990, 140], [990, GROUND]], { key: key + ':post2', w: 2, alpha: al, p: pb });
-    stroke(ctx, [[100, GROUND], [1820, GROUND + 2]], { key: key + ':fl', w: 2.6, alpha: al, p: pa });
-    for (let i = 0; i < 10; i++) { const x = 160 + i * 180; stroke(ctx, [[x, GROUND + 4], [x + (x - 960) * 0.5, 1110]], { key: key + ':fb' + i, w: 1.4, alpha: al * 0.4, p: pb, sketch: false }); }
-    // круглое окно с луной
-    const wc = [1300, 330];
-    P.crayon(L.color, P.ellShape(wc[0], wc[1], 66, 66), { key: key + ':glass', color: 'night', alpha: 0.55 * al, w: 10, gap: 6, angle: -0.5, p: pb, still: true });
-    P.crayon(L.light, P.ellShape(wc[0] + 22, wc[1] - 24, 20, 20), { key: key + ':moonL', color: 'light', alpha: 0.9 * al, w: 6, gap: 4, angle: 0.3, p: pb, still: true, cond: (n, x, y) => Math.hypot(x - wc[0] - 30, y - wc[1] + 32) > 16 });
-    stroke(ctx, ellipsePts(wc[0], wc[1], 80, 80, 0, key + 'w'), { key: key + ':w', closed: true, w: 2.8, alpha: al, p: pa });
-    stroke(ctx, ellipsePts(wc[0], wc[1], 66, 66, 0, key + 'w2'), { key: key + ':w2', closed: true, w: 2, alpha: al, p: pa });
-    stroke(ctx, [[wc[0] - 66, wc[1]], [wc[0] + 66, wc[1]]], { key: key + ':wx', w: 2, alpha: al, p: pb });
-    stroke(ctx, [[wc[0], wc[1] - 66], [wc[0], wc[1] + 66]], { key: key + ':wy', w: 2, alpha: al, p: pb });
-    // лунный луч
-    P.crayon(L.light, P.polyShape([[1250, 280], [1360, 380], [1090, GROUND + 10], [700, GROUND + 10]]), { key: key + ':beamL', color: 'guide', alpha: 0.22 * al, w: 14, gap: 10, angle: -1.15, p: pb, still: true, world: true, maxLen: 140 });
-    // паутина
-    const cw = [560, 552];
-    for (let i = 0; i < 5; i++) { const a = 0.15 + i * 0.32; stroke(L.light, [cw, [cw[0] + Math.cos(a) * 120, cw[1] + Math.sin(a) * 120]], { key: key + ':cw' + i, color: 'light', w: 1.4, alpha: al * 0.7 * pb, sketch: false }); }
-    for (let j = 1; j <= 3; j++) stroke(L.light, arcPts(cw[0], cw[1], j * 36, j * 36, 0.15, 1.45, 10), { key: key + ':cwa' + j, color: 'light', w: 1.2, alpha: al * 0.6 * pb, sketch: false });
-    // старый чемодан
-    const sx = 330, sy = GROUND;
-    const suit = [[sx - 110, sy], [sx - 110, sy - 120], [sx + 110, sy - 120], [sx + 110, sy]];
-    P.castShadow(sx + 20, sy, 140, 18, { key: key + ':scast', alpha: al * pb, h: 80 });
-    knock(ctx, [suit], al * pb);
-    P.volume(P.polyShape(suit, { round: 0.5, vy: (f) => lerp(-0.4, 0.3, f) }), { key: key + ':suV', color: 'warm:dk', alpha: al, p: pb, still: true, w: 0.8 });
-    stroke(ctx, suit, { key: key + ':su', closed: true, w: 2.6, alpha: al, p: pb });
-    stroke(ctx, curve([[sx - 30, sy - 120], [sx - 26, sy - 146], [sx + 26, sy - 146], [sx + 30, sy - 120]], false, 5), { key: key + ':suh', w: 2.6, alpha: al, p: pb });
-    stroke(ctx, [[sx - 110, sy - 60], [sx + 110, sy - 58]], { key: key + ':sub', w: 1.8, alpha: al * 0.7, p: pb });
+  // ---- картонная коробка с клапанами (0 — торчит вверх, π/2 — закрыт, <0 — отогнут)
+  const BOX = { w: 56, d: 46, h: 42 };
+  function box(k, c, yaw, fl, o = {}) {
+    const al = o.al === undefined ? 1 : o.al, p = o.p === undefined ? 1 : o.p;
+    if (al <= 0.004) return;
+    const fr = frame(yaw), O = flat(c);
+    const L = (x, y, z) => at(O, fr, x, y, z);
+    const w = BOX.w / 2, d = BOX.d / 2, h = BOX.h;
+    const parts = [
+      { id: 'f', pts: [L(-w, 0, d), L(w, 0, d), L(w, h, d), L(-w, h, d)], n: fr.f },
+      { id: 'b', pts: [L(w, 0, -d), L(-w, 0, -d), L(-w, h, -d), L(w, h, -d)], n: mul(fr.f, -1) },
+      { id: 'l', pts: [L(-w, 0, -d), L(-w, 0, d), L(-w, h, d), L(-w, h, -d)], n: mul(fr.r, -1) },
+      { id: 'r', pts: [L(w, 0, d), L(w, 0, -d), L(w, h, -d), L(w, h, d)], n: fr.r },
+      { id: 'bt', pts: [L(-w, 0.4, d), L(w, 0.4, d), L(w, 0.4, -d), L(-w, 0.4, -d)], n: fr.u, floor: true },
+    ];
+    const flap = (id, A, B, inward, ang, lift) => {
+      const dir = add(mul(fr.u, Math.cos(ang)), mul(inward, Math.sin(ang)));
+      const a = madd(A, fr.u, lift), b = madd(B, fr.u, lift);
+      return { id: 'fl' + id, pts: [a, b, madd(b, dir, d), madd(a, dir, d)], n: add(mul(inward, -Math.cos(ang)), mul(fr.u, Math.sin(ang))), flap: true };
+    };
+    parts.push(
+      flap('l', L(-w, h, d), L(-w, h, -d), fr.r, fl.l, 0),
+      flap('r', L(w, h, -d), L(w, h, d), mul(fr.r, -1), fl.r, 0),
+      flap('b', L(-w, h, -d), L(w, h, -d), fr.f, fl.b, 0.5),
+      flap('f', L(w, h, d), L(-w, h, d), mul(fr.f, -1), fl.f, 0.9),
+    );
+    for (const pt of parts) {
+      const cen = mul(pt.pts.reduce((s, q) => add(s, q), [0, 0, 0]), 0.25);
+      const outer = dot(pt.n, sub(S.CAM.pos, cen)) > 0;
+      const role = pt.floor || !outer ? 'cardboard:sh' : 'cardboard';
+      S.push(S.depth(cen) - (pt.flap ? 0.3 : 0), () => {
+        const poly = S.drawPoly(k + pt.id, pt.pts, { color: role, normal: outer ? pt.n : mul(pt.n, -1), alpha: al, p, line: true, lw: 1.8, shade: { noCore: !pt.floor && outer, w: 0.7 } });
+        if (poly && pt.id === 'f' && outer && o.label) { // надпись на боку
+          const q = S.proj(L(0, h * 0.5, d + 0.3));
+          if (q) write(P.L.graphite, o.label, q[0], q[1] + 8, { key: k + 'lbl', size: clamp(q[3] * 6.5, 14, 60), align: 'center', alpha: al * 0.85, weight: 600, rot: -0.04 });
+        }
+        if (poly && pt.id === 'flf' && o.dust) { // пыль на крышке
+          const r = P.staticRng(k + 'dust'), C = P.L.graphite;
+          C.fillStyle = P.col('soft', 0.45 * al);
+          for (let i = 0; i < o.dust; i++) {
+            const s = S.proj(L(lerp(-w, w, r()), h + 1.4, lerp(-d, d, r())));
+            if (s) { C.beginPath(); C.arc(s[0], s[1], Math.max(0.7, s[3] * (0.25 + r() * 0.35)), 0, 6.283); C.fill(); }
+          }
+        }
+      });
+    }
   }
 
-  // ---- подписи (экран)
+  // ---- чердак: двускатная крыша, круглое окно, балки, старые вещи
+  const ATT = { x0: -290, x1: 290, z0: -300, z1: 260, eave: 55, ridge: 265 };
+  const AWIN = [0, 165, ATT.z0 + 0.6], AWR = 34;
+  function attic(k, day, al = 1) {
+    const A = ATT, reach = day ? 720 : 560;
+    S.push(BGD + 10, () => {
+      planeCrayon(k + 'fl', [[A.x0, 0, A.z1], [A.x1, 0, A.z1], [A.x1, 0, A.z0], [A.x0, 0, A.z0]], 'floor', [0, 1, 0], { al, reach, angle: S.screenAngle([0, 0, -40], [0, 0, 1]) + 0.1, w: 0.9 });
+      const gable = (z) => [[A.x0, 0, z], [A.x1, 0, z], [A.x1, A.eave, z], [0, A.ridge, z], [A.x0, A.eave, z]];
+      planeCrayon(k + 'gb', gable(A.z0), 'cardboard', [0, 0, 1], { al, reach, angle: 1.35 });
+      planeCrayon(k + 'gf', gable(A.z1), 'cardboard', [0, 0, -1], { al, reach, angle: 1.35 });
+      planeCrayon(k + 'kl', [[A.x0, 0, A.z1], [A.x0, 0, A.z0], [A.x0, A.eave, A.z0], [A.x0, A.eave, A.z1]], 'cardboard', [1, 0, 0], { al, reach, angle: 1.3 });
+      planeCrayon(k + 'kr', [[A.x1, 0, A.z0], [A.x1, 0, A.z1], [A.x1, A.eave, A.z1], [A.x1, A.eave, A.z0]], 'cardboard', [-1, 0, 0], { al, reach, angle: 1.3 });
+      planeCrayon(k + 'rl', [[A.x0, A.eave, A.z1], [A.x0, A.eave, A.z0], [0, A.ridge, A.z0], [0, A.ridge, A.z1]], 'floor', norm([A.ridge - A.eave, A.x0, 0]), { al, reach, angle: -0.2 });
+      planeCrayon(k + 'rr', [[A.x1, A.eave, A.z0], [A.x1, A.eave, A.z1], [0, A.ridge, A.z1], [0, A.ridge, A.z0]], 'floor', norm([-(A.ridge - A.eave), A.x0, 0]), { al, reach, angle: 0.2 });
+    });
+    S.push(BGD + 9, () => {
+      for (let z = A.z0 + 24; z < A.z1; z += 26) S.line(k + 'bd' + z, [[A.x0, 0, z], [A.x1, 0, z]], { w: 1.1, alpha: 0.28 * al, sketch: false, color: 'floor:dk' });
+      for (let x = A.x0 + 30; x < A.x1; x += 30) { // доски фронтона
+        const top = Math.abs(x) < 1 ? A.ridge : lerp(A.ridge, A.eave, Math.abs(x) / A.x1);
+        S.line(k + 'gv' + x, [[x, 0, A.z0 + 0.3], [x, top, A.z0 + 0.3]], { w: 1.1, alpha: 0.3 * al, sketch: false, color: 'cardboard:dk' });
+      }
+      for (let i = 1; i < 5; i++) for (const s of [-1, 1]) { // доски кровли
+        const x = s * A.x1 * (1 - i / 5), y = lerp(A.eave, A.ridge, i / 5);
+        S.line(k + 'rb' + s + i, [[x, y, A.z0], [x, y, A.z1]], { w: 1.1, alpha: 0.28 * al, sketch: false, color: 'floor:dk' });
+      }
+      const edges = [
+        [[A.x0, 0, A.z0], [A.x1, 0, A.z0]], [[A.x0, 0, A.z0], [A.x0, A.eave, A.z0]], [[A.x1, 0, A.z0], [A.x1, A.eave, A.z0]],
+        [[A.x0, A.eave, A.z0], [0, A.ridge, A.z0]], [[A.x1, A.eave, A.z0], [0, A.ridge, A.z0]],
+        [[A.x0, 0, A.z0], [A.x0, 0, A.z1]], [[A.x1, 0, A.z0], [A.x1, 0, A.z1]],
+        [[A.x0, A.eave, A.z0], [A.x0, A.eave, A.z1]], [[A.x1, A.eave, A.z0], [A.x1, A.eave, A.z1]],
+        [[A.x0, 0, A.z1], [A.x1, 0, A.z1]], [[A.x0, A.eave, A.z1], [0, A.ridge, A.z1]], [[A.x1, A.eave, A.z1], [0, A.ridge, A.z1]],
+      ];
+      edges.forEach(([a, b], i) => S.line(k + 'e' + i, [a, b], { w: 2.2, alpha: 0.8 * al }));
+    });
+    // круглое окно
+    S.push(BGD + 8, () => {
+      const ring = S.ring(AWIN, [AWR, 0, 0], [0, AWR, 0], 28);
+      S.drawPoly(k + 'win', ring, { color: day ? 'light' : 'night', crayon: { w: 10, gap: 6, angle: -0.5, alpha: (day ? 0.8 : 0.85) * al }, alpha: al });
+      if (day) S.drawPoly(k + 'win2', ring, { color: 'a1:lt', crayon: { w: 9, gap: 9, angle: 0.6, alpha: 0.3 * al }, alpha: al, knock: false });
+      else S.drawEll(k + 'moon', add(AWIN, [12, 12, 0.3]), frame(0), [7, 7, 0.5], { color: 'light', alpha: al, lw: 1.2, shade: { noCore: true, noLight: true } });
+      S.line(k + 'wr', ring.concat([ring[0]]), { w: 3, alpha: al });
+      S.line(k + 'wv', [add(AWIN, [0, -AWR, 0.5]), add(AWIN, [0, AWR, 0.5])], { w: 2.4, alpha: al, sketch: false });
+      S.line(k + 'wh', [add(AWIN, [-AWR, 0, 0.5]), add(AWIN, [AWR, 0, 0.5])], { w: 2.4, alpha: al, sketch: false });
+    });
+    // луч из окна
+    S.push(BGD + 7, () => {
+      const d = norm([0.12, -0.62, 1]);
+      const ring = S.ring(AWIN, [AWR, 0, 0], [0, AWR, 0], 16);
+      const foot = ring.map((q) => madd(q, d, q[1] / -d[1]));
+      const scr = ring.concat(foot).map((q) => S.proj(q)).filter(Boolean).map((q) => [q[0], q[1]]);
+      if (scr.length < 6) return;
+      P.crayon(P.L.color, P.polyShape(S.hull(scr)), { key: k + 'beam', color: day ? 'light' : 'a1:lt', alpha: (day ? 0.32 : 0.2) * al, w: 14, gap: 10, angle: -1.25, maxLen: 200, still: true });
+      const fp = foot.map((q) => S.proj(q)).filter(Boolean).map((q) => [q[0], q[1]]);
+      if (fp.length > 5) P.crayon(P.L.color, P.polyShape(S.hull(fp)), { key: k + 'foot', color: 'light', alpha: (day ? 0.55 : 0.35) * al, w: 12, gap: 8, angle: 0.3, still: true });
+    });
+    // стропила
+    for (const z of [-220, -110, 0, 110, 220]) for (const s of [-1, 1]) {
+      const a = [s * (A.x1 - 6), A.eave + 2, z], b = [0, A.ridge - 8, z];
+      S.push(S.depth(lerp3(a, b, 0.5)), () => S.drawTube(k + 'raf' + s + z, [a, b], [5, 5], { color: 'floor:dk', alpha: al, lw: 1.7, shade: { noCore: true, w: 0.6 } }));
+    }
+    S.push(S.depth([0, A.ridge - 8, 0]) - 1, () => S.drawTube(k + 'ridge', [[0, A.ridge - 8, A.z0], [0, A.ridge - 8, A.z1]], [6, 6], { color: 'floor:dk', alpha: al, lw: 1.8, shade: { noCore: true, w: 0.6 } }));
+    // старые вещи
+    cuboid(k + 'case', [-150, 11, -150], frame(0.4), [64, 22, 40], 'fur:dk', { al });
+    cuboid(k + 'box2', [170, 20, -200], frame(-0.3), [50, 40, 40], 'cardboard', { al });
+    S.push(S.depth([160, 9, 40]), () => S.drawTube(k + 'roll', [[120, 9, 70], [200, 9, -10]], [9, 9], { color: 'a2:dk', alpha: al, lw: 1.7, shade: { w: 0.6 } }));
+  }
+
+  // ---------------------------------------------------------------------
+  // Подписи
+  // ---------------------------------------------------------------------
   const CAP = { year: [110, 178, 120], name: [114, 258, 62], sub: [116, 318, 46] };
-  function cap(ctx, t, kind, text, t0, al = 1, keySuffix = '') {
+  function cap(t, kind, text, t0, al = 1, ks = '') {
+    const ctx = P.L.graphite;
     const [x, y, size] = CAP[kind];
     const p = seg(t, t0, t0 + Math.max(0.3, text.length * 0.045));
     if (p <= 0 || al <= 0.004) return;
-    // бумага под подписью: стираем то, что под ней (чтобы читалось)
     const tw = P.textWidth(ctx, text, size);
-    knock(ctx, [[[x - 18, y - size * 0.82], [x + tw * p + 20, y - size * 0.82], [x + tw * p + 20, y + size * 0.28], [x - 18, y + size * 0.28]]], 0.75 * al * p);
-    write(ctx, text, x, y, { key: 'cap:' + kind + keySuffix, size, p, alpha: al });
+    S.knock([[[x - 18, y - size * 0.82], [x + tw * p + 20, y - size * 0.82], [x + tw * p + 20, y + size * 0.28], [x - 18, y + size * 0.28]]], 0.75 * al * p);
+    write(ctx, text, x, y, { key: 'cap:' + kind + ks, size, p, alpha: al });
   }
-  // подпись над головой (мир)
-  function headLabel(ctx, g, text, t, t0, al, key) {
-    if (!g) return;
-    const p = seg(t, t0, t0 + 0.5);
-    write(ctx, text, g.headTop[0], g.headTop[1] - 22, { key: 'hl:' + key, size: 40, align: 'center', p, alpha: al, weight: 600 });
+  // подпись над головой
+  function tag(t, text, pt, t0, al, key, size = 40) {
+    const q = S.proj(pt), p = seg(t, t0, t0 + 0.5);
+    if (!q || p <= 0 || al <= 0.004) return;
+    const ctx = P.L.graphite, tw = P.textWidth(ctx, text, size);
+    S.knock([[[q[0] - tw / 2 - 12, q[1] - size * 0.8], [q[0] + tw / 2 + 12, q[1] - size * 0.8], [q[0] + tw / 2 + 12, q[1] + size * 0.3], [q[0] - tw / 2 - 12, q[1] + size * 0.3]]], 0.6 * al * p);
+    write(ctx, text, q[0], q[1], { key: 'tag:' + key, size, align: 'center', p, alpha: al, weight: 600 });
   }
 
   // =====================================================================
-  // СЦЕНЫ
+  // ПЛАНЫ
   // =====================================================================
-  const POST = { night: 0, flash: 0, warm: 0, warmC: [960, 600] };
+  const POST = { night: 0, flash: 0, warm: 0, dark: 0, leak: null };
 
-  // ---------- 0–1. Титул и 1956: Аня
-  function scene1(ctx, t) {
-    const A = GENS.anya;
-    const age = growAge(A, t);
-    const wIn = seg(t, T.anyaWalk[0], T.anyaWalk[1]), wD = seg(t, T.walkDoor1[0], T.walkDoor1[1]);
-    let ax = 1230, face = -1, walk = null;
-    if (t >= T.anyaWalk[0]) ax = lerp(1230, 700, easeInOut(wIn));
-    if (t >= T.walkDoor1[0]) { ax = lerp(700, DOOR_X, easeInOut(wD)); face = 1; }
-    if (wIn > 0 && wIn < 1) walk = wIn * Math.PI * 4;
-    if (wD > 0 && wD < 1) walk = wD * Math.PI * 5;
-    if (t >= T.walkDoor1[1]) face = 1;
-    const reach = seg(t, T.reach1[0], T.reach1[1]), h = easeInOut(seg(t, T.hug1[0], T.hug1[1]));
-    const lean = (reach * (1 - h)) * 0.3;
-    const stA = { x: ax, age, face, walk, lean, key: 'anya', draw: seg(t, T.anyaIn[0], T.anyaIn[1]), mood: h > 0.5 && t < T.walkDoor1[0] + 0.3 ? 'happy' : 'smile', look: t >= T.walkDoor1[1] ? 0 : undefined };
-    const g = personGeo(SPEC.anya, stA);
-    // мишка: под ёлкой → на руках
-    const floorC = bearCenter(560, GROUND, BS);
-    const bc = h > 0 ? arc2(floorC, g.hugC, h, 50) : floorC;
-    const bear = { x: bc[0], y: bc[1] - BEAR_CY * BS, s: BS, rot: h * 0.06, key: 'bear', ground: GROUND, shadowA: 1 - clamp(h * 3), draw: seg(t, T.bearDraw[0], T.bearDraw[1]), fur: seg(t, T.fur0[0], T.fur0[1]), marks: { button: seg(t, T.button[0], T.button[1]) } };
-    const restHands = g.rest;
-    const reachHands = { l: [floorC[0] + 60, floorC[1] - 10], r: [floorC[0] + 20, floorC[1] + 20] };
-    const hh = hugHands(bc, BS);
-    stA.hands = { l: lerp2(lerp2(restHands.l, reachHands.l, reach), hh.l, h), r: lerp2(lerp2(restHands.r, reachHands.r, reach), hh.r, h) };
-    // камера
-    const cam = camTrack(t, focus(floorC, BS, 1.9), [
-      [T.pull1[0], T.pull1[1] - T.pull1[0], { x: 860, y: 600, z: 1.18 }],
-      [6.9, 0.8, { x: 700, y: 700, z: 1.75 }],
-      [8.3, 0.7, DOORC],
-      [T.exit1[0] + 0.2, T.exit1[1] - T.exit1[0] - 0.2, focus(bc, BS, CUT)]]);
-    P.camera(ctx, cam);
-    const oth = erase(t, T.exit1[0], T.exit1[0] + 0.6);
-    const treeA = oth * erase(t, T.treeOut[0], T.treeOut[1]);
-    P.light = { x: 995, y: 330, z: 650 };
-    drawRoom('s1r', 'wallA', seg(t, T.floor1[0], T.floor1[1]), oth, { window: [860, 250, 1130, 590] });
-    drawFloor(ctx, 's1', seg(t, T.floor1[0], T.floor1[1]), oth);
-    drawWindow(ctx, 's1w', 860, 250, 1130, 590, seg(t, T.window1[0], T.window1[1]), oth, { frost: true });
-    drawDoor(ctx, 's1d', seg(t, T.door1[0], T.door1[1]), oth);
-    drawMarks(ctx, genMarks(A, t, false), oth);
-    drawTree(ctx, 's1t', 560, seg(t, T.tree[0], T.tree[1]), treeA);
-    drawGift(ctx, 's1g', 420, seg(t, T.tree[0] + 0.8, T.tree[1] + 0.3), treeA);
-    stA.alpha = oth;
-    drawPerson(ctx, SPEC.anya, stA, 'body');
-    drawBear(ctx, bear);
-    drawPerson(ctx, SPEC.anya, stA, 'arms');
-    // подписи
-    P.screen(ctx);
+  // ---- 0 + 1A. Мишка рисуется на пустом листе, вокруг вырастает комната 1956 года, вбегает Аня
+  function shot01(t) {
+    const E = ERA[1956];
+    useLight(E.light);
+    const c = add(BEAR0, [0, 20, 0]);
+    const orb = (tt) => { const u = seg(tt, -1, 4.6); return orbit(c, lerp(BYAW - 1.05, BYAW - 0.3, u), lerp(128, 112, u), lerp(34, 46, u), { target: add(c, [0, lerp(4, 2, u), 0]), fov: 34 }); };
+    const wide = { pos: [10, 205, 215], target: [20, 55, -190], fov: 50 };
+    cam(t <= 4.6 ? orb(t) : camMix(orb(4.6), wide, easeInOut(seg(t, 4.6, 7.6))));
+    room(E, { p: seg(t, T.room1[0], T.room1[1]), door: 'open' });
+    tree('tr', TREE, 1, seg(t, 4.5, 6.0));
+    if (t >= T.anyaIn[0]) {
+      const u = seg(t, T.run1[0], T.run1[1]), k = easeOut(u);
+      const pos = [lerp(DOORP[0], ANYA1[0], k), lerp(DOORP[1], ANYA1[1], k)];
+      const runYaw = Math.atan2(ANYA1[0] - DOORP[0], ANYA1[1] - DOORP[1]);
+      const dist = Math.hypot(pos[0] - DOORP[0], pos[1] - DOORP[1]);
+      const moving = u > 0 && u < 1;
+      F.human(SPEC.anya, { key: 'anya', pos, yaw: lerpAng(runYaw, BYAW + PI, seg(u, 0.75, 1)), age: 5, walk: moving ? dist / 125 * 2 * PI : null, run: moving ? 1 - seg(u, 0.7, 1) : 0, walkAmp: 1.1, mood: 'open', draw: seg(t, T.anyaIn[0], T.anyaIn[1]), look: c });
+    }
+    bear(t, { pos: BEAR0, yaw: BYAW, ground: 0, draw: seg(t, T.bearDraw[0], T.bearDraw[1]), fur: seg(t, T.fur0[0], T.fur0[1]) });
+    S.flush();
     const tAl = erase(t, T.titleOut[0], T.titleOut[1]);
-    if (t < T.titleOut[1] + 1.3) {
-      write(ctx, 'Мишка', W / 2, 215, { key: 'title', size: 150, align: 'center', p: seg(t, T.title[0], T.title[1]), alpha: tAl, weight: 700 });
-      write(ctx, 'одна игрушка — четыре поколения', W / 2, 950, { key: 'subtitle', size: 58, align: 'center', p: seg(t, T.sub[0], T.sub[1]), alpha: tAl });
+    if (t < T.titleOut[1] + 1.1) {
+      const G = P.L.graphite;
+      write(G, 'Мишка', W / 2, 205, { key: 'title', size: 150, align: 'center', p: seg(t, T.title[0], T.title[1]), alpha: tAl, weight: 700 });
+      write(G, 'одна игрушка — четыре поколения', W / 2, 990, { key: 'subtitle', size: 58, align: 'center', p: seg(t, T.sub[0], T.sub[1]), alpha: tAl });
     }
-    const cAl = erase(t, T.exit1[0], T.exit1[0] + 0.6);
-    const yr = A.born + Math.floor(age + 1e-6);
-    cap(ctx, t, 'year', String(yr), T.year1, cAl);
-    cap(ctx, t, 'name', 'Аня, ' + ageText(Math.floor(age + 1e-6)), T.name1, cAl);
+    cap(t, 'year', '1956', T.year1);
   }
 
-  // ---------- 2. 1979: Лена
-  function scene2(ctx, t) {
-    const Lg = GENS.lena;
-    const ageL = growAge(Lg, t);
-    const wD = seg(t, T.walkDoor2[0], T.walkDoor2[1]);
-    let lx = 1040, lface = -1, walk = null;
-    if (t >= T.walkDoor2[0]) { lx = lerp(1040, DOOR_X, easeInOut(wD)); lface = 1; walk = wD < 1 ? wD * Math.PI * 4 : null; }
-    const stA = { x: 780, age: 28, face: 1, lean: 0.07, key: 'anya2', mood: 'smile' };
-    const gA = personGeo(SPEC.anya, stA);
-    const hg = easeInOut(seg(t, T.give2[0], T.give2[1]));
-    const stL = { x: lx, age: ageL, face: lface, walk, key: 'lena', draw: seg(t, T.lenaIn[0], T.lenaIn[1]), mood: hg > 0.6 && t < T.walkDoor2[0] ? 'happy' : 'smile', look: t > T.walkDoor2[1] ? 0 : undefined };
-    const gL = personGeo(SPEC.lena, stL);
-    // в коробку
-    const lid2 = easeInOut(seg(t, T.lidClose[0], T.lidClose[1]));
-    const box = boxGeo(1230, lid2, 0);
-    const ib = easeInOut(seg(t, T.intoBox[0], T.intoBox[1]));
-    const inBoxC = bearCenter(box.mid[0] + 6, GROUND - 14, BS);
-    let bc = arc2(gA.giveC, gL.hugC, hg, 40);
-    if (ib > 0) bc = arc2(gL.hugC, inBoxC, ib, 70);
-    const bear = { x: bc[0], y: bc[1] - BEAR_CY * BS, s: BS, rot: ib > 0 ? 0 : 0.05, key: 'bear', marks: { button: 1, patch: seg(t, T.patch[0], T.patch[1]) } };
-    // руки
-    const sh = sideHands(gA.giveC, BS, 6);
-    const aHold = 1 - seg(t, T.give2[0] + 0.45, T.give2[1] + 0.1);
-    const followA = sideHands(bc, BS, 6);
-    stA.hands = { l: lerp2(gA.rest.l, hg > 0 ? followA.l : sh.l, aHold), r: lerp2(gA.rest.r, hg > 0 ? followA.r : sh.r, aHold) };
-    const reachL = reachHands(gL);
-    const lh = hugHands(bc, BS);
-    const lHold = 1 - seg(t, T.intoBox[0] + 0.25, T.intoBox[1]);
-    stL.hands = hg <= 0 ? { l: lerp2(gL.rest.l, reachL.l, seg(t, 14.3, 14.9)), r: lerp2(gL.rest.r, reachL.r, seg(t, 14.3, 14.9)) }
-      : { l: lerp2(gL.rest.l, lerp2(reachL.l, lh.l, hg), lHold), r: lerp2(gL.rest.r, lerp2(reachL.r, lh.r, hg), lHold) };
-    // камера
-    const ROOM2 = { x: 900, y: 640, z: 1.3 };
-    const cam = camTrack(t, focus(gA.giveC, BS, CUT), [
-      [T.pull2[0], T.pull2[1] - T.pull2[0], ROOM2],
-      [T.zoomIn2[0], 0.4, focus(add(bc, [0, -20]), BS, 2.25)],
-      [T.zoomOut2[0], 0.5, ROOM2],
-      [17.3, 0.6, DOORC],
-      [19.2, 0.6, { x: 1390, y: 700, z: 1.45 }],
-      [T.exit2[0] + 0.1, T.exit2[1] - T.exit2[0] - 0.1, focus(box.mid, 1, 2.2)]]);
-    P.camera(ctx, cam);
-    const oth = erase(t, T.exit2[0], T.exit2[0] + 0.45);
-    const rp = seg(t, T.room2[0], T.room2[1]);
-    P.light = { x: 380, y: -150, z: 900 };
-    drawRoom('s2r', 'wallB', rp, oth);
-    drawWallpaper(ctx, 's2wp', rp, oth, [130, 740]);
-    drawFloor(ctx, 's2', rp, oth);
-    drawCarpet(ctx, 's2c', 150, 330, 720, 700, rp, oth);
-    drawDoor(ctx, 's2d', rp, oth);
-    drawMarks(ctx, genMarks(GENS.anya, t, true).concat(genMarks(Lg, t, false)), oth * seg(rp, 0.5, 1));
-    // Аня отдаёт и уходит
-    stA.alpha = oth * erase(t, T.anyaOut2[0], T.anyaOut2[1]);
-    stA.draw = seg(t, T.pull2[0], T.pull2[0] + 0.7);
-    drawPerson(ctx, SPEC.anya, stA, 'body');
-    stL.alpha = oth;
-    drawPerson(ctx, SPEC.lena, stL, 'body');
-    // коробка
-    const bp = seg(t, T.box2[0], T.box2[1]);
-    drawBoxBack(ctx, 'box', box, bp, 1, lid2);
-    drawBear(ctx, bear);
-    drawBoxFront(ctx, 'box', box, bp, 1, lid2, seg(t, T.box2[1], T.box2[1] + 0.4));
-    drawPerson(ctx, SPEC.anya, stA, 'arms');
-    drawPerson(ctx, SPEC.lena, stL, 'arms');
-    headLabel(ctx, gA, 'Аня, 28', t, T.label2, stA.alpha * stA.draw, 'a2');
-    // иголка с ниткой у заплатки
-    const pn = seg(t, T.patch[0], T.patch[1]);
-    if (pn > 0 && pn < 1) {
-      const M = bearM(bear), c = M(PATCH[0] + Math.cos(pn * 18) * 17, PATCH[1] + Math.sin(pn * 18) * 14);
-      stroke(ctx, [c, [c[0] + 34, c[1] - 30]], { key: 'needle', w: 1.8, alpha: 1, sketch: false, gaps: false });
-      stroke(ctx, curve([c, [c[0] + 50, c[1] + 10], [c[0] + 90, c[1] - 20]], false, 6), { key: 'thread', color: 'a2', w: 1.3, alpha: 0.8, sketch: false });
-    }
-    P.screen(ctx);
-    const cAl = erase(t, T.exit2[0], T.exit2[0] + 0.45);
-    cap(ctx, t, 'year', String(Lg.born + Math.floor(ageL + 1e-6)), T.year2, cAl);
-    cap(ctx, t, 'name', 'Лена, ' + ageText(Math.floor(ageL + 1e-6)), T.name2, cAl);
-    cap(ctx, t, 'sub', 'дочка Ани', T.name2 + 0.35, cAl);
+  // ---- 1B. Глазами мишки: Аня наклоняется и поднимает его
+  function shot1b(t) {
+    const E = ERA[1956];
+    useLight(E.light);
+    const lk = easeInOut(seg(t, T.lift1[0], T.lift1[1]));
+    const cr = easeInOut(seg(t, T.crouch1[0], T.crouch1[1])) * (1 - easeInOut(seg(t, T.lift1[0], T.lift1[1] - 0.15)));
+    const st = { key: 'anya', pos: ANYA1, yaw: BYAW + PI, age: 5, crouch: cr * 0.8, bend: cr * 0.25, mood: t > T.lift1[0] + 0.35 ? 'happy' : 'open' };
+    const g0 = F.rig(SPEC.anya, st);
+    const stand = F.rig(SPEC.anya, Object.assign({}, st, { crouch: 0, bend: 0 }));
+    const hf = hold(stand, 'front');
+    const bpos = add(lerp3(BEAR0, hf.pos, lk), [0, Math.sin(lk * PI) * 10, 0]);
+    const bfr = frame(BYAW, lerp(0, -0.12, lk));
+    const sides = [at(bpos, bfr, 13.5 * BS, 21 * BS, 0), at(bpos, bfr, -13.5 * BS, 21 * BS, 0)];
+    const rk = easeInOut(seg(t, T.reach1[0], T.reach1[1]));
+    st.hands = [0, 1].map((i) => lerp3(g0.arms[i].wrist, sides[i], rk));
+    st.armsFront = true; st.curl = lerp(0.4, 0.85, rk);
+    const eye = at(bpos, bfr, 0, 37 * BS, 14 * BS);
+    st.look = eye;
+    const g = F.rig(SPEC.anya, st);
+    cam({ pos: eye, target: g.cran.c, fov: 70, roll: 0.12 * Math.sin(lk * PI) - 0.04 });
+    room(E, { door: 'open' });
+    tree('tr', TREE, 1, 1);
+    F.human(SPEC.anya, st);
+    S.flush();
+    cap(t, 'year', '1956', T.year1);
   }
 
-  // ---------- 3. Чердак и поворот
-  function scene3(ctx, t) {
-    const bx = 900;
-    const crack = seg(t, T.crack[0], T.crack[1]);
-    const turn = t >= T.TURN ? 1 : 0;
-    const op = turn ? back(seg(t, T.TURN, T.TURN + 0.3)) : 0;
-    const lid = turn ? 1 - op : 1 - crack * 0.12 * (0.6 + 0.4 * Math.sin(t * 40));
-    const box = boxGeo(bx, clamp(lid, 0, 1.2), turn ? Math.max(0, op - 1) * 2 + op * 0.3 : 0);
-    const rise = easeOut(seg(t, T.rise[0], T.rise[1]));
-    const inC = bearCenter(box.mid[0] + 6, GROUND - 14, BS);
-    const upC = [inC[0], inC[1] - 250];
-    const bc = lerp2(inC, upC, rise);
-    const cam = camTrack(t, focus(boxGeo(bx, 1, 0).mid, 1, 2.2), [
-      [T.pull3[0], T.pull3[1] - T.pull3[0], { x: 960, y: 560, z: 1.0 }],
-      [T.pull3[1], T.TURN - T.pull3[1], { x: 930, y: 610, z: 1.1 }],
-      [T.TURN + 0.05, T.rise[1] - T.TURN - 0.05, focus(bc, BS, CUT)]]);
-    P.camera(ctx, cam);
-    P.light = turn ? { x: box.center[0], y: box.center[1] + 20, z: 240 } : { x: 1300, y: 330, z: 320 };
-    const dark = seg(t, T.s3, T.s3 + 0.8) * (1 - seg(t, T.TURN, T.TURN + 0.35));
-    POST.night = dark;
-    drawAttic(ctx, 'att', seg(t, T.attic[0], T.attic[1]), 1);
-    // темнота штриховкой, с лучом лунного света
-    const view = [[cam.x - W / cam.z, cam.y - H / cam.z], [cam.x + W / cam.z, cam.y - H / cam.z], [cam.x + W / cam.z, cam.y + H / cam.z], [cam.x - W / cam.z, cam.y + H / cam.z]];
-    const beam = [[1250, 280], [1360, 380], [1090, GROUND + 10], [700, GROUND + 10]];
-    const wnd = ellipsePoly(1300, 330, 66, 66, 0, 24);
-    if (dark > 0.01) {
-      hatch(ctx, [view, beam, wnd], { key: 'dark1', color: 'line', alpha: 0.4 * dark, gap: 6, w: 1.5, angle: -0.8, maxLen: 140 });
-      hatch(ctx, [view, wnd], { key: 'dark2', color: 'line', alpha: 0.28 * dark, gap: 8, w: 1.4, angle: 0.75, maxLen: 140 });
-      hatch(ctx, beam, { key: 'beam', color: 'guide', alpha: 0.18 * dark, gap: 9, w: 1.2, angle: -1.15 });
-    }
-    // пыль в луче
-    const r = P.staticRng('dust');
-    ctx.fillStyle = P.col('soft', 0.6 * dark);
-    for (let i = 0; i < 40; i++) {
-      const u = r(), v = r(), sp = 10 + r() * 20;
-      const y = 300 + ((v * 640 + (t - T.s3) * sp) % 640);
-      const x = lerp(1300, 900, (y - 300) / 640) + (u - 0.5) * 260;
-      ctx.beginPath(); ctx.arc(x, y, 1.6 + r() * 1.6, 0, 6.283); ctx.fill();
-    }
-    drawBoxBack(ctx, 'box3', box, 1, 1, lid);
-    const bear = { x: bc[0], y: bc[1] - BEAR_CY * BS, s: BS, key: 'bear', marks: { button: 1, patch: 1 }, dust: 1 };
-    drawBear(ctx, bear);
-    drawBoxFront(ctx, 'box3', box, 1, 1, lid, 1);
-    // щель света и лучи
-    if (crack > 0 && !turn) {
-      stroke(ctx, [box.flapF[2], box.flapF[3]], { key: 'crackL', color: 'fur', w: 3, alpha: crack, sketch: false });
-      knock(ctx, [[box.flapF[3], box.flapF[2], [box.flapF[2][0] + 6, box.flapF[2][1] - 4], [box.flapF[3][0] + 6, box.flapF[3][1] - 4]]], crack);
-    }
-    if (turn) {
-      const ray = 1 - seg(t, T.TURN + 0.35, T.rise[1] + 0.3);
-      const o = [box.center[0], box.center[1]];
-      const rays = [];
-      for (let i = 0; i < 9; i++) {
-        const a = -Math.PI / 2 + (i - 4) * 0.22, wd = 0.045;
-        rays.push([o, [o[0] + Math.cos(a - wd) * 1400, o[1] + Math.sin(a - wd) * 1400], [o[0] + Math.cos(a + wd) * 1400, o[1] + Math.sin(a + wd) * 1400]]);
-      }
-      knock(ctx, rays, 0.85 * ray);
-      rays.forEach((rr, i) => stroke(ctx, [rr[0], rr[1]], { key: 'rayL' + i, color: 'fur', w: 2, alpha: 0.5 * ray, sketch: false }));
-      POST.flash = (1 - seg(t, T.TURN, T.TURN + 0.5)) * 0.85;
-    }
-    P.screen(ctx);
-    const yr = 1993 + Math.floor(10 * seg(t, T.years3[0], T.years3[1]) + 1e-6);
-    cap(ctx, t, 'year', String(yr), T.years3[0] - 0.3, 1 - seg(t, T.TURN, T.TURN + 0.3));
-    cap(ctx, t, 'name', 'чердак', T.years3[0], 1 - seg(t, T.TURN, T.TURN + 0.3));
+  // ---- 1C. Аня кружится с мишкой, камера снизу облетает навстречу
+  function shot1c(t) {
+    const E = ERA[1956];
+    useLight(E.light);
+    const u = seg(t, T.spin1[0], T.spin1[1]), k = easeInOut(u);
+    const st = { key: 'anya', pos: ANYA1, yaw: BYAW + PI + k * 2 * PI, age: 5, mood: 'happy', flare: 1 + 0.55 * Math.sin(u * PI), headPitch: -0.12 };
+    const c = [ANYA1[0], 62, ANYA1[1]];
+    const a = lerp(BYAW + 0.6, BYAW - 0.5, easeInOut(seg(t, T.s1c, T.s1d)));
+    cam(sway(orbit(c, a, 175, 40, { target: add(c, [0, 10, 0]), fov: 46, roll: -0.07 }), t));
+    room(E, { door: 'open' });
+    tree('tr', TREE, 1, 1);
+    withBear(t, SPEC.anya, st, 'hug');
+    S.flush();
+    cap(t, 'year', '1956', T.year1);
+    cap(t, 'name', 'Аня, 5 лет', T.name1);
   }
 
-  // ---------- 4. 2003: Катя
-  function scene4(ctx, t) {
-    const K = GENS.katya;
-    const ageK = growAge(K, t);
-    const wD = seg(t, T.walkDoor4[0], T.walkDoor4[1]);
-    let kx = 1010, kface = -1, walk = null;
-    if (t >= T.walkDoor4[0]) { kx = lerp(1010, DOOR_X, easeInOut(wD)); kface = 1; walk = wD < 1 ? wD * Math.PI * 4 : null; }
-    const hgK = easeInOut(seg(t, T.hug4[0], T.hug4[1]));
-    const stK = { x: kx, age: ageK, face: kface, walk, key: 'katya', mood: t < T.hug4[1] + 0.8 ? 'happy' : 'smile', look: t > T.walkDoor4[1] ? 0 : undefined };
-    const gK = personGeo(SPEC.katya, stK);
-    const bc = arc2(gK.upC, gK.hugC, hgK, 0);
-    const scarfP = seg(t, T.scarf[0], T.scarf[1]);
-    const bear = { x: bc[0], y: bc[1] - BEAR_CY * BS, s: BS, rot: (1 - hgK) * Math.sin(t * 9) * 0.05, key: 'bear', marks: { button: 1, patch: 1, scarf: scarfP }, dust: 1 - seg(t, T.puff[0], T.puff[1]), puff: seg(t, T.puff[0], T.puff[1]) };
-    const upH = sideHands(bc, BS, 18), hh = hugHands(bc, BS);
-    stK.hands = { l: lerp2(upH.l, hh.l, hgK), r: lerp2(upH.r, hh.r, hgK) };
-    stK.elbow = hgK < 0.5 ? 'out' : 'down';
-    // бабушка Аня с клубком
-    const stG = { x: 600, age: 52, face: 1, key: 'gran', lean: 0.05, draw: seg(t, T.granIn[0], T.granIn[1]), mood: 'smile' };
-    const gG = personGeo(SPEC.anya52, stG);
-    const yarnC = add(gG.up(gG.sw * 0.4, gG.shY + gG.R * 2.6), [0, 0]);
-    stG.hands = { l: [yarnC[0] - 22, yarnC[1] + 6], r: [yarnC[0] + 24, yarnC[1] - 4] };
-    const cam = camTrack(t, focus(bc, BS, CUT), [
-      [T.pull4[0], T.pull4[1] - T.pull4[0], { x: 1000, y: 600, z: 1.6 }],
-      [26.4, 0.9, { x: 820, y: 650, z: 1.45 }],
-      [29.5, 0.7, DOORC],
-      [T.exit4[0] + 0.2, T.exit4[1] - T.exit4[0] - 0.2, focus(bc, BS, CUT)]]);
-    P.camera(ctx, cam);
-    const oth = erase(t, T.exit4[0], T.exit4[0] + 0.6);
-    const rp = seg(t, T.room4[0], T.room4[1]);
-    P.light = { x: 900, y: 360, z: 650 };
-    drawRoom('s4r', 'wallC', rp, oth, { window: [760, 240, 1040, 570] });
-    drawFloor(ctx, 's4', rp, oth);
-    drawWindow(ctx, 's4w', 760, 240, 1040, 570, rp, oth, { sun: true, curtains: true, plant: true });
-    drawDoor(ctx, 's4d', rp, oth);
-    drawMarks(ctx, genMarks(GENS.anya, t, true).concat(genMarks(GENS.lena, t, true), genMarks(K, t, false)), oth * seg(rp, 0.5, 1));
-    stG.alpha = oth * erase(t, T.granOut[0], T.granOut[1]);
-    drawPerson(ctx, SPEC.anya52, stG, 'body');
-    drawYarn(ctx, 'yarn', yarnC, 22, stG.draw, stG.alpha);
-    stK.alpha = oth;
-    stK.draw = seg(t, T.pull4[0] + 0.1, T.pull4[0] + 0.9);
-    drawPerson(ctx, SPEC.katya, stK, 'body');
-    // нитка от клубка к шарфу
-    if (scarfP > 0 && t < T.granOut[1]) {
-      const M = bearM(bear), nk = M(-30, -112);
-      const mid = [(yarnC[0] + nk[0]) / 2, Math.max(yarnC[1], nk[1]) + 60];
-      stroke(ctx, curve([yarnC, mid, nk], false, 10), { key: 'yarnT', color: 'a2', w: 1.6, alpha: stG.alpha * (1 - seg(t, T.scarf[1], T.granOut[0])), p: seg(t, T.scarf[0], T.scarf[0] + 0.4), sketch: false });
+  // ---- рост у дверного косяка (1D, 2C, 4C)
+  function growShot(t, g, E, list, camFn, push) {
+    useLight(E.light);
+    const age = growAge(g, t), Hc = F.heightOf(g.spec, age);
+    const st = { key: g.key, pos: [ROOM.x1 - 1.5 - Hc * 0.075, KIDZ], yaw: -PI / 2, age, mood: 'smile' };
+    const g0 = F.rig(g.spec, st);
+    const hp = hold(g0, 'side');
+    const bc = at(hp.pos, hp.fr, 0, 24 * BS, 0);
+    let C = camFn(t, Hc);
+    if (push) {
+      const kk = easeIn(seg(t, push[0], push[1]));
+      if (kk > 0) C = camMix(C, { pos: madd(bc, norm(sub(C.pos, bc)), 62), target: bc, fov: 34 }, kk);
     }
-    drawBear(ctx, bear);
-    drawPerson(ctx, SPEC.anya52, stG, 'arms');
-    drawPerson(ctx, SPEC.katya, stK, 'arms');
-    headLabel(ctx, gG, 'бабушка Аня', t, T.label4, stG.alpha * stG.draw, 'g4');
-    P.screen(ctx);
-    const cAl = erase(t, T.exit4[0], T.exit4[0] + 0.6);
-    cap(ctx, t, 'year', String(K.born + Math.floor(ageK + 1e-6)), T.year4, cAl);
-    cap(ctx, t, 'name', 'Катя, ' + ageText(Math.floor(ageK + 1e-6)), T.name4, cAl);
-    cap(ctx, t, 'sub', 'внучка Ани', T.name4 + 0.35, cAl);
+    cam(C);
+    room(E, { door: 'closed' });
+    doorMarks(t, list);
+    st.hands = hp.hands; st.curl = 0.8;
+    F.human(g.spec, st);
+    bear(t, { pos: hp.pos, fr: hp.fr });
+    S.flush();
+    const n = Math.floor(age + 1e-6);
+    cap(t, 'year', String(g.born + n), g.grow[0] - 0.5);
+    cap(t, 'name', g.name + ', ' + ageText(n), g.grow[0] - 0.4);
+  }
+  function shot1d(t) {
+    growShot(t, GENS.anya, ERA[1956], [[GENS.anya, false]], (tt, Hc) => {
+      const u = easeInOut(seg(tt, T.s1d, T.grow1[1])), a = lerp(-2.05, -1.2, u), r = lerp(215, 190, u);
+      return { pos: [300 + Math.sin(a) * r, Hc * 0.78 + 15, -122 + Math.cos(a) * r], target: [308, Hc * 0.66, -124], fov: 38 };
+    }, [14.6, T.s2a]);
   }
 
-  // ---------- 5–6. 2026: Соня и постер
-  const POSTER = { x: 840, y: 925, s: 2.5 };
-  function scene5(ctx, t) {
-    const stP = { x: 790, age: 75, face: 1, lean: 0.12, key: 'prab', mood: 'smile' };
-    const gP = personGeo(SPEC.anya75, stP);
-    const hg = easeInOut(seg(t, T.give5[0], T.give5[1]));
-    const stS = { x: 990, age: 3, face: -1, key: 'sonia', draw: seg(t, T.soniaIn[0], T.soniaIn[1]), mood: hg > 0.5 ? 'happy' : 'open', clip: 1 - seg(t, T.clip[0], T.clip[0] + 0.05) };
-    const gS = personGeo(SPEC.sonia, stS);
-    const tp = easeInOut(seg(t, T.toPoster[0], T.toPoster[1]));
-    let bc = arc2(gP.giveC, gS.hugC, hg, 40);
-    const posterC = bearCenter(POSTER.x, POSTER.y, POSTER.s);
-    const bs = lerp(BS, POSTER.s, tp);
-    if (tp > 0) bc = lerp2(bc, posterC, tp);
-    const clipP = seg(t, T.clip[0], T.clip[1]);
-    const bear = { x: bc[0], y: bc[1] - BEAR_CY * bs, s: bs, rot: hg * 0.05 * (1 - tp), key: 'bear', ground: POSTER.y, shadowA: seg(tp, 0.6, 1), marks: { button: 1, patch: 1, scarf: 1, clip: clipP >= 1 ? 1 : 0 } };
-    // руки
-    const pHold = 1 - seg(t, T.give5[0] + 0.45, T.give5[1] + 0.1);
-    const fol = sideHands(bc, BS, 6);
-    stP.hands = { l: lerp2(gP.rest.l, fol.l, pHold), r: lerp2(gP.rest.r, fol.r, pHold) };
-    const reachS = reachHands(gS);
-    const hs = hugHands(bc, BS);
-    const sHold = 1 - seg(t, T.toPoster[0], T.toPoster[0] + 0.3);
-    stS.hands = hg <= 0 ? { l: lerp2(gS.rest.l, reachS.l, seg(t, 37.4, 38.0)), r: lerp2(gS.rest.r, reachS.r, seg(t, 37.4, 38.0)) }
-      : { l: lerp2(gS.rest.l, lerp2(reachS.l, hs.l, hg), sHold), r: lerp2(gS.rest.r, lerp2(reachS.r, hs.r, hg), sHold) };
-    // Лена и Катя рядом
-    const stL = { x: 380, age: 51, face: 1, key: 'lena51', draw: seg(t, T.family5[0], T.family5[1]), mood: 'smile' };
-    const stK = { x: 1320, age: 30, face: -1, key: 'katya30', draw: seg(t, T.family5[0] + 0.2, T.family5[1]), mood: 'smile' };
-    const gL = personGeo(SPEC.lena51, stL), gK = personGeo(SPEC.katya, stK);
-    void gL; void gK;
-    // камера
-    const cam = camTrack(t, focus(gP.giveC, BS, CUT), [
-      [T.pull5[0], T.pull5[1] - T.pull5[0], { x: 850, y: 640, z: 1.22 }],
-      [39.2, 1.8, { x: (gP.X + gS.X) / 2 + 10, y: 690, z: 1.85 }],
-      [T.push5[0], T.push5[1] - T.push5[0], { x: (gP.X + gS.X) / 2 + 30, y: 700, z: 2.1 }],
-      [T.toPoster[0], T.toPoster[1] - T.toPoster[0], CAM0]]);
-    P.camera(ctx, cam);
-    // тепло
-    const warm = seg(t, T.warm[0], T.warm[1]);
-    POST.warm = warm;
-    POST.warmC = [(gS.X + bc[0]) / 2, gS.hugC[1]];
-    const oth = erase(t, T.erase5[0], T.erase5[0] + 0.9);
-    const rp = seg(t, T.room5[0], T.room5[1]);
-    P.light = { x: lerp(710, 260, tp), y: lerp(360, 60, tp), z: lerp(650, 900, tp) };
-    drawRoom('s5r', 'wallD', rp, oth, { window: [560, 230, 860, 560] });
-    drawFloor(ctx, 's5', rp, oth);
-    drawWindow(ctx, 's5w', 560, 230, 860, 560, rp, oth, { sun: true, curtains: true, plant: true });
-    drawDoor(ctx, 's5d', rp, oth);
-    drawMarks(ctx, genMarks(GENS.anya, t, true).concat(genMarks(GENS.lena, t, true), genMarks(GENS.katya, t, true)), oth * seg(rp, 0.5, 1), { noNames: true });
-    // тёплый ореол штриховкой
-    if (warm > 0) {
-      const wc = [gS.X - 20, gS.hugC[1] - 20];
-      hatch(ctx, [ellipsePoly(wc[0], wc[1], 260, 230, 0, 36), ellipsePoly(wc[0], wc[1], 150, 140, 0, 30)], { key: 'halo', color: 'warm', alpha: 0.22 * warm * oth, p: warm, gap: 7, w: 1.4, angle: -0.6, jitter: 8, maxLen: 40 });
-    }
-    stL.alpha = 0.85 * oth; stK.alpha = 0.85 * oth; stP.alpha = oth;
-    stS.alpha = erase(t, T.erase5[0] + 0.5, T.erase5[1]);
-    drawPerson(ctx, SPEC.lena51, stL);
-    drawPerson(ctx, SPEC.katya, stK);
-    stP.draw = seg(t, T.pull5[0], T.pull5[0] + 0.8);
-    drawPerson(ctx, SPEC.anya75, stP, 'body');
-    drawPerson(ctx, SPEC.sonia, stS, 'body');
-    drawBear(ctx, bear);
-    // заколка летит с головы Сони на ухо мишке
-    if (clipP > 0 && clipP < 1) {
-      const from = clipPos(gS), to = bearM(bear)(BG.ear[0], BG.ear[1]);
-      const c = arc2(from, to, easeInOut(clipP), 70);
-      drawHeart(ctx, c[0], c[1], lerp(gS.R * 0.2, 13 * BS, clipP), 'flyclip', 1, 1, 0.3 + clipP * 6.3);
-    }
-    drawPerson(ctx, SPEC.anya75, stP, 'arms');
-    drawPerson(ctx, SPEC.sonia, stS, 'arms');
-    const lbA = oth * erase(t, 39.1, 39.6);
-    headLabel(ctx, gP, 'прабабушка Аня', t, T.labels5, lbA * stP.draw, 'p5');
-    headLabel(ctx, gL, 'Лена', t, T.labels5 + 0.15, lbA * stL.draw * 0.9, 'l5');
-    headLabel(ctx, gK, 'Катя', t, T.labels5 + 0.3, lbA * stK.draw * 0.9, 'k5');
-    if (t >= T.s6) poster(ctx, t, bear);
-    P.screen(ctx);
-    const cAl = erase(t, T.erase5[0], T.erase5[0] + 0.9);
-    cap(ctx, t, 'year', '2026', T.year5, cAl);
-    cap(ctx, t, 'name', 'Соня, 3 года', T.name5, cAl);
-    cap(ctx, t, 'sub', 'правнучка Ани', T.name5 + 0.35, cAl);
-    if (t >= T.s6) posterText(ctx, t);
+  // ---- 2A. 1979. Через плечо Лены: мама Аня отдаёт ей мишку
+  function shot2a(t) {
+    const E = ERA[1979];
+    useLight(E.light);
+    const A = { spec: SPEC.anya, st: { key: 'anya28', pos: A2, yaw: Y2, age: 28, crouch: 0.3, bend: 0.2, mood: 'smile' } };
+    const B = { spec: SPEC.lena, st: { key: 'lena', pos: L2, yaw: Y2 + PI, age: 4, mood: t > T.give2[0] + 0.6 ? 'happy' : 'open' } };
+    const gv = give(T.give2, t, A, B);
+    A.st.look = gv.gB.cran.c; B.st.look = gv.gA.cran.c;
+    const d = [Math.sin(Y2), 0, Math.cos(Y2)], r = [Math.cos(Y2), 0, -Math.sin(Y2)];
+    const u = easeInOut(seg(t, T.s2a, T.s2b));
+    const pos = [L2[0] + d[0] * lerp(62, 52, u) + r[0] * 24, 100, L2[1] + d[2] * lerp(62, 52, u) + r[2] * 24];
+    cam(sway({ pos, target: lerp3(gv.gA.cran.c, gv.center, 0.4), fov: 42 }, t, 0.7));
+    room(E, {});
+    F.human(A.spec, A.st);
+    F.human(B.spec, B.st);
+    bear(t, { pos: gv.pos, fr: gv.fr });
+    S.flush();
+    cap(t, 'year', '1979', T.year2);
+    cap(t, 'name', 'Лена, 4 года', T.name2);
   }
 
-  // стрелки-сноски к меткам на мишке
-  function poster(ctx, t, bear) {
-    const M = bearM(bear);
-    const notes = [
-      { to: M(-24, -174), from: [600, 520], text: 'пуговица — Аня, 1962', tx: 588, ty: 530, align: 'right', color: 'line' },
-      { to: M(48, -217), from: [1060, 404], text: 'заколка — Соня, 2026', tx: 1074, ty: 414, align: 'left', color: 'warm' },
-      { to: M(36, -96), from: [1060, 640], text: 'шарф — бабушка Аня, 2003', tx: 1074, ty: 650, align: 'left', color: 'a2' },
-      { to: M(PATCH[0] + 14, PATCH[1] + 2), from: [1060, 880], text: 'заплатка — Лена, 1979', tx: 1074, ty: 890, align: 'left', color: 'a1' },
+  // ---- 2B. Сверху: мама Аня ставит заплатку на лапу
+  function shot2b(t) {
+    const E = ERA[1979];
+    useLight(E.light);
+    const fr = frame(TABLE.yaw + 0.5);
+    const bpos = [TABLE.c[0] + 6, TABLE.h, TABLE.c[1] + 4];
+    const L = (v) => at(bpos, fr, v[0] * BS, v[1] * BS, v[2] * BS);
+    const bc = L([5, 13, 9]);
+    const u = easeInOut(seg(t, T.s2b, T.s2c));
+    const pos = add(madd(madd(bc, fr.f, lerp(42, 34, u)), fr.r, lerp(26, 16, u)), [0, lerp(62, 52, u), 0]);
+    cam({ pos, target: bc, fov: 42, roll: lerp(-0.12, 0.04, u) });
+    room(E, {});
+    table('tb');
+    bear(t, { pos: bpos, fr });
+    // игла с ниткой ходит по краю заплатки
+    const lg = F.BEAR.legs[1];
+    const c = lerp3(L(lg.a), L(lg.b), 0.62);
+    const up = norm(sub(L([0, 40, 0]), L([0, 0, 0])));
+    const nrm = norm(add(mul(fr.f, 0.6), mul(up, 0.8)));
+    const side = norm(cross(nrm, up)), up2 = norm(cross(side, nrm));
+    const cc = madd(c, nrm, lg.r[0] * BS * 0.95);
+    const pu = seg(t, T.patch[0], T.patch[1]);
+    if (t > T.patch[0] - 0.3) {
+      const a = pu * PI * 2 - 0.6, dip = Math.sin(pu * PI * 10);
+      const tip = madd(madd(madd(cc, side, Math.cos(a) * 3.9 * BS), up2, Math.sin(a) * 3.5 * BS), nrm, 0.6 + dip * 1.2);
+      const nd = norm(add(add(mul(side, 0.85), mul(nrm, 0.4 + 0.25 * dip)), mul(up2, 0.2)));
+      const eye = madd(tip, nd, 7);
+      const far = add(add(madd(eye, side, 60), mul(up2, 12)), [0, 30, 0]);
+      S.push(S.depth(tip) - 30, () => {
+        S.line('thread', [eye, madd(eye, nd, 9), add(lerp3(madd(eye, nd, 9), far, 0.5), [0, 6 * Math.sin(pu * PI * 10), 0]), far], { color: 'a2:dk', w: 2.4, alpha: 0.95, sketch: false });
+        S.line('needle', [tip, eye], { w: 2.8, alpha: 1, sketch: false, gaps: false });
+        S.line('needleL', [lerp3(tip, eye, 0.3), lerp3(tip, eye, 0.8)], { ctx: P.L.color, color: 'light', w: 2, alpha: 0.9, sketch: false, gaps: false });
+      });
+    }
+    const sp = at([TABLE.c[0], TABLE.h, TABLE.c[1]], frame(TABLE.yaw), 30, 0, 18);
+    S.push(S.depth(sp), () => S.drawTube('spool', [sp, add(sp, [0, 6, 0])], [3.6, 3.6], { color: 'a2', alpha: 1, lw: 1.4, shade: { noCore: true, shine: 0.8 } }));
+    S.flush();
+    cap(t, 'year', '1979', T.s2b - 1);
+  }
+
+  // ---- 2C. Лена растёт; камера у самого пола смотрит вверх вдоль косяка
+  function shot2c(t) {
+    growShot(t, GENS.lena, ERA[1979], [[GENS.anya, true], [GENS.lena, false]], (tt, Hc) => {
+      const u = easeInOut(seg(tt, T.s2c, T.s2d));
+      return { pos: [lerp(212, 222, u), 16, lerp(-34, -48, u)], target: [312, Hc * 0.82, -122], fov: 54 };
+    });
+  }
+
+  // ---- 2D. Из коробки: Лена (17) закрывает клапаны, темнеет
+  function shot2d(t) {
+    const E = ERA[1979];
+    useLight(E.light);
+    const fl = {};
+    for (const s of ['l', 'r', 'b', 'f']) fl[s] = lerp(-0.3, PI / 2, easeIn(seg(t, FLAPS2[s][0], FLAPS2[s][1])));
+    const fw = [0, 1];
+    const st = { key: 'lena', pos: [BOX2[0], BOX2[1] + BOX.d / 2 + 28], yaw: PI, age: 17, bend: 0.5, crouch: 0.12, mood: 'calm', look: [BOX2[0], 15, BOX2[1]] };
+    const g0 = F.rig(SPEC.lena, st);
+    const pl = easeInOut(seg(t, T.place2[0], T.place2[1]));
+    const inBox = [[BOX2[0] + 12, 26, BOX2[1] + 4], [BOX2[0] - 12, 26, BOX2[1] + 4]];
+    st.hands = fw.map((i) => lerp3(inBox[i], g0.arms[i].wrist, pl));
+    const g = F.rig(SPEC.lena, st);
+    cam({ pos: [BOX2[0], 11, BOX2[1] - 4], target: lerp3(g.cran.c, [BOX2[0], 150, BOX2[1] + 20], 0.2), fov: 70, roll: 0.05 });
+    room(E, {});
+    F.human(SPEC.lena, st);
+    box('bx2', BOX2, 0, fl);
+    S.flush();
+    POST.dark = seg(t, 23.45, 23.85) * 0.93;
+    cap(t, 'year', '1992', T.s2d + 0.3);
+  }
+
+  // ---- 3A. Чердак ночью, годы идут, на коробке копится пыль
+  function shot3a(t) {
+    useLight([0, 170, -280]);
+    const u = easeInOut(seg(t, T.s3a, T.s3b));
+    cam({ pos: lerp3([150, 200, 175], [92, 118, 92], u), target: lerp3([0, 28, -55], [0, 24, -42], u), fov: 46 });
+    attic('at', false);
+    const yrs = seg(t, T.years3[0], T.years3[1]);
+    box('bxa', BOXA, BOXA_YAW, { l: PI / 2, r: PI / 2, b: PI / 2, f: PI / 2 }, { label: 'Лена · игрушки', dust: Math.floor(12 + 90 * yrs) });
+    S.flush();
+    POST.night = 0.62;
+    cap(t, 'year', String(1993 + Math.floor(yrs * 10 + 1e-6)), T.s3a + 0.3);
+  }
+
+  // ---- 3B. Из коробки: щель света, клапаны распахиваются — ПОВОРОТ
+  function boxFront(c, yaw, out) { const fr = frame(yaw); return at(flat(c), fr, 0, 0, BOX.d / 2 + out); }
+  function shot3b(t) {
+    const day = t >= T.TURN;
+    useLight(day ? [0, 170, -280] : [0, 170, -280]);
+    const crack = easeOut(seg(t, T.crack[0], T.crack[1])), op = easeOut(seg(t, T.open3[0], T.open3[1]));
+    const closed = PI / 2 - crack * 0.16;
+    const fl = { l: lerp(PI / 2, -0.5, op), r: lerp(PI / 2, -0.45, op), b: lerp(closed, -0.4, op), f: lerp(closed, -0.45, op) };
+    const kp = boxFront(BOXA, BOXA_YAW, 26);
+    const st = { key: 'katya', pos: [kp[0], kp[2]], yaw: BOXA_YAW + PI, age: 7, bend: 0.55, crouch: 0.15, mood: 'open', draw: seg(t, T.kat3[0], T.kat3[1]) };
+    const g0 = F.rig(SPEC.katya, st);
+    const rk = easeInOut(seg(t, T.reach3[0], T.reach3[1]));
+    const inBox = [at(flat(BOXA), frame(BOXA_YAW), 11, 30, 6), at(flat(BOXA), frame(BOXA_YAW), -11, 30, 6)];
+    st.hands = [0, 1].map((i) => lerp3(g0.arms[i].wrist, inBox[i], rk));
+    st.armsFront = true;
+    const g = F.rig(SPEC.katya, st);
+    st.look = at(flat(BOXA), frame(BOXA_YAW), 0, 10, 0);
+    const top = at(flat(BOXA), frame(BOXA_YAW), 0, 80, 12);
+    const camPos = at(flat(BOXA), frame(BOXA_YAW), 0, 11, -3);
+    cam({ pos: camPos, target: day ? lerp3(top, g.cran.c, easeInOut(seg(t, T.TURN, T.kat3[1]))) : top, fov: day ? lerp(80, 62, easeInOut(seg(t, T.TURN, T.s4a))) : 80, roll: -0.04 });
+    attic('at', day);
+    if (t >= T.kat3[0]) F.human(SPEC.katya, st);
+    box('bxa', BOXA, BOXA_YAW, fl);
+    S.flush();
+    if (!day) {
+      POST.dark = 0.92;
+      const q = S.proj(at(flat(BOXA), frame(BOXA_YAW), 0, BOX.h + 1, 0));
+      POST.leak = q ? { x: q[0], y: q[1], a: crack } : null;
+    }
+    POST.flash = day ? 0.85 * (1 - seg(t, T.TURN, T.TURN + 0.55)) : 0;
+  }
+
+  // ---- 4A. 2003. Катя кружится с мишкой над головой, облачко пыли
+  function shot4a(t) {
+    useLight([0, 170, -280]);
+    const u = seg(t, T.spin4[0], T.spin4[1]), k = easeInOut(u);
+    const st = { key: 'katya', pos: KAT4, yaw: PI + 0.3 + k * PI * 2.2, age: 7, mood: 'happy', flare: 1 + 0.5 * Math.sin(u * PI), headPitch: -0.45 };
+    const c = [KAT4[0], 70, KAT4[1]];
+    const a = lerp(0.5, -0.8, easeInOut(seg(t, T.s4a, T.s4b)));
+    cam(sway(orbit(c, a, 175, 82, { target: add(c, [0, 22, 0]), fov: 46, roll: -0.08 }), t, 1.2));
+    attic('at', true);
+    box('bxa', BOXA, BOXA_YAW, { l: -0.5, r: -0.45, b: -0.4, f: -0.45 });
+    const wb = withBear(t, SPEC.katya, st, 'up');
+    // облачко пыли
+    const pu = seg(t, T.puff[0], T.puff[1]);
+    if (pu > 0 && pu < 1 && wb.b) {
+      const bc = wb.b.center;
+      S.push(S.depth(bc) - 40, () => {
+        const r = P.staticRng('puff'), C = P.L.color;
+        for (let i = 0; i < 30; i++) {
+          const d = norm([r() - 0.5, r() * 0.8 - 0.2, r() - 0.5]), sp = 20 + r() * 50, v = easeOut(pu);
+          const q = S.proj(add(madd(bc, d, 6 + sp * v), [0, 12 * pu, 0]));
+          if (!q) continue;
+          C.fillStyle = P.col(i % 3 ? 'light' : 'soft', (1 - pu) * 0.7);
+          C.beginPath(); C.arc(q[0], q[1], Math.max(1, q[3] * (0.8 + r() * 1.6)), 0, 6.283); C.fill();
+        }
+      });
+    }
+    S.flush();
+    cap(t, 'year', '2003', T.year4);
+    cap(t, 'name', 'Катя, 7 лет', T.name4);
+  }
+
+  // ---- 4B. Бабушка Аня (52) вяжет мишке шарф
+  function shot4b(t) {
+    const E = ERA[2003];
+    useLight(E.light);
+    const u = easeInOut(seg(t, T.s4b, T.s4c));
+    cam(sway({ pos: lerp3([60, 118, 40], [28, 112, 22], u), target: [-72, 102, -185], fov: 33 }, t, 0.8));
+    room(E, {});
+    stool('st4', STOOL);
+    const bpos = [STOOL[0], 66, STOOL[1]], bfr = frame(-0.5);
+    const head = at(bpos, bfr, 0, 36 * BS, 0), neck = at(bpos, bfr, 0, 25 * BS, 6 * BS);
+    const st = { key: 'gran', pos: G4, yaw: 0.95, age: 52, mood: 'smile', draw: seg(t, T.granIn[0], T.granIn[1]), look: head };
+    const g0 = F.rig(SPEC.anya52, st);
+    const osc = Math.sin(t * PI * 4.4) * 2;
+    const base = madd(madd(g0.chest, g0.T.f, 24), [0, 1, 0], -16);
+    st.hands = [madd(base, g0.T.r, -7 + osc), madd(base, g0.T.r, 7 - osc)];
+    st.armsFront = true; st.curl = 0.6;
+    F.human(SPEC.anya52, st);
+    bear(t, { pos: bpos, fr: bfr, shadow: false });
+    const h0 = st.hands[0], h1 = st.hands[1];
+    const ball = [-62, 7, -128];
+    S.push(S.depth(base) - 15, () => {
+      const pk = seg(t, T.granIn[1] - 0.3, T.granIn[1] + 0.2);
+      S.line('ndl0', [h0, madd(madd(h0, g0.T.r, 15), [0, 1, 0], 7)], { w: 1.8, alpha: pk, sketch: false, gaps: false });
+      S.line('ndl1', [h1, madd(madd(h1, g0.T.r, -15), [0, 1, 0], 7)], { w: 1.8, alpha: pk, sketch: false, gaps: false });
+      const mid = lerp3(h0, h1, 0.5);
+      S.line('yarn1', [mid, lerp3(mid, neck, 0.5), neck], { color: 'a2', w: 2.2, alpha: pk * seg(t, T.scarf[0] - 0.4, T.scarf[0]), sketch: false });
+      S.line('yarn0', [ball, add(lerp3(ball, mid, 0.5), [0, -20, 0]), mid], { color: 'a2', w: 1.4, alpha: pk * 0.9, sketch: false });
+    });
+    S.push(S.depth(ball), () => S.drawEll('ball', ball, frame(0.3), [7, 7, 7], { color: 'a2', alpha: 1, lw: 1.5, shade: { shine: 0.7 } }));
+    S.flush();
+    cap(t, 'year', '2003', T.s4b - 1);
+    cap(t, 'name', 'бабушка Аня, 52 года', T.label4);
+  }
+
+  // ---- 4C + 4D. Катя растёт, камера поднимается с ней; наезд на мишку
+  function shot4c(t) {
+    growShot(t, GENS.katya, ERA[2003], [[GENS.anya, true], [GENS.lena, true], [GENS.katya, false]], (tt, Hc) => {
+      const u = easeInOut(seg(tt, T.s4c, T.s4d));
+      return { pos: [lerp(170, 185, u), Hc * 0.92 + 8, lerp(-24, -50, u)], target: [312, Hc * 0.8, -120], fov: 40 };
+    }, [T.s4d, T.s5a]);
+  }
+
+  // ---- 2026: где стоит семья
+  function family(t, o) {
+    const al = o.al === undefined ? 1 : o.al;
+    const d = o.draw === undefined ? 1 : o.draw;
+    const look = o.look;
+    F.human(SPEC.lena51, { key: 'lena51', pos: o.lena || [-25, -255], yaw: o.lenaYaw === undefined ? 0.1 : o.lenaYaw, age: 51, mood: 'smile', look, alpha: al, draw: d });
+    F.human(SPEC.katya, { key: 'katya30', pos: o.katya || [75, -215], yaw: o.katyaYaw === undefined ? -0.4 : o.katyaYaw, age: 30, mood: 'smile', look, alpha: al, draw: d });
+  }
+
+  // ---- 5A. Общий план сверху: Соня ковыляет к прабабушке
+  function shot5a(t) {
+    const E = ERA[2026];
+    useLight(E.light);
+    const u = easeInOut(seg(t, T.s5a, T.s5b));
+    cam({ pos: lerp3([150, 330, 230], [95, 215, 135], u), target: [-50, 55, -165], fov: 46 });
+    const dr = seg(t, T.room5[0] + 0.2, T.room5[1] + 0.2);
+    room(E, { p: seg(t, T.room5[0], T.room5[1]) });
+    // Соня идёт
+    const w = seg(t, T.toddle[0], T.toddle[1]);
+    const pos = [lerp(SON0[0], S5[0], easeInOut(w)), lerp(SON0[1], S5[1], easeInOut(w))];
+    const yawS = Math.atan2(S5[0] - SON0[0], S5[1] - SON0[1]);
+    const dist = Math.hypot(pos[0] - SON0[0], pos[1] - SON0[1]);
+    const sS = { key: 'sonia', pos, yaw: lerpAng(yawS, Y5 + PI, seg(w, 0.8, 1)), age: 2, mood: 'open', walk: w > 0 && w < 1 ? dist / 40 * 2 * PI : null, walkAmp: 0.75, lean: Math.sin(dist / 40 * PI) * 0.06, clip: 1, draw: dr };
+    const gs = F.rig(SPEC.sonia, sS);
+    sS.hands = [madd(madd(gs.shoulders[0], gs.T.r, -14), [0, 1, 0], -12), madd(madd(gs.shoulders[1], gs.T.r, 14), [0, 1, 0], -12)].map((q) => madd(q, gs.T.f, 10));
+    F.human(SPEC.sonia, sS);
+    const sonHead = add(gs.cran.c, [0, 40, 0]);
+    const sA = { key: 'gran75', pos: A5, yaw: Y5, age: 75, mood: 'smile', look: gs.cran.c, draw: dr };
+    const wb = withBear(t, SPEC.anya75, sA, 'give');
+    family(t, { look: gs.cran.c, draw: dr });
+    S.flush();
+    cap(t, 'year', '2026', T.year5);
+    const lb = T.labels5;
+    tag(t, 'прабабушка Аня', add(wb.g.cran.c, [0, 42, 0]), lb, 1, 'a75', 38);
+    tag(t, 'бабушка Лена', [-25, 205, -255], lb + 0.25, 1, 'l51', 38);
+    tag(t, 'мама Катя', [75, 205, -215], lb + 0.5, 1, 'k30', 38);
+    tag(t, 'Соня', sonHead, lb + 0.75, 1, 's2', 38);
+  }
+
+  // ---- 5B. Через плечо Сони: прабабушка отдаёт мишку
+  function shot5b(t) {
+    const E = ERA[2026];
+    useLight(E.light);
+    const A = { spec: SPEC.anya75, st: { key: 'gran75', pos: A5, yaw: Y5, age: 75, crouch: 0.35, bend: 0.2, mood: 'smile' } };
+    const B = { spec: SPEC.sonia, st: { key: 'sonia', pos: S5, yaw: Y5 + PI, age: 2, mood: t > T.give5[0] + 0.6 ? 'happy' : 'open', clip: 1 } };
+    const gv = give(T.give5, t, A, B);
+    A.st.look = gv.gB.cran.c; B.st.look = gv.gA.cran.c;
+    const d = [Math.sin(Y5), 0, Math.cos(Y5)], r = [Math.cos(Y5), 0, -Math.sin(Y5)];
+    const u = easeInOut(seg(t, T.s5b, T.s5c));
+    cam(sway({ pos: [S5[0] + d[0] * lerp(62, 54, u) - r[0] * 42, 96, S5[1] + d[2] * lerp(62, 54, u) - r[2] * 42], target: lerp3(gv.gA.cran.c, gv.center, 0.45), fov: 44 }, t, 0.6));
+    room(E, {});
+    F.human(A.spec, A.st);
+    F.human(B.spec, B.st);
+    bear(t, { pos: gv.pos, fr: gv.fr });
+    family(t, { look: gv.center });
+    S.flush();
+    cap(t, 'year', '2026', T.s5b - 1);
+  }
+
+  // ---- 5C. Сверху-спереди: Соня обнимает мишку, всё теплеет
+  const D5 = [Math.sin(Y5), 0, Math.cos(Y5)], R5 = [-Math.cos(Y5), 0, Math.sin(Y5)]; // от прабабушки к Соне; правая рука Сони
+  function shot5c(t) {
+    const E = ERA[2026];
+    useLight(E.light);
+    const u = easeInOut(seg(t, T.s5c, T.s5d));
+    const c = [S5[0], 48, S5[1]];
+    const pos = add(add(madd(c, D5, -lerp(72, 62, u)), mul(R5, lerp(42, 34, u))), [0, lerp(110, 96, u), 0]);
+    cam({ pos, target: add(c, [0, -4, 0]), fov: 40, roll: lerp(0.06, 0, u) });
+    room(E, {});
+    const sS = { key: 'sonia', pos: S5, yaw: Y5 + PI, age: 2, mood: 'happy', clip: 1, look: pos };
+    const wb = withBear(t, SPEC.sonia, sS, 'hug');
+    const gp = [S5[0] - D5[0] * 42 - R5[0] * 58, S5[1] - D5[2] * 42 - R5[2] * 58];
+    F.human(SPEC.anya75, { key: 'gran75', pos: gp, yaw: Math.atan2(S5[0] - gp[0], S5[1] - gp[1]), age: 75, crouch: 0.2, bend: 0.2, mood: 'smile', look: wb.g.cran.c });
+    family(t, { look: wb.g.cran.c });
+    S.flush();
+    POST.warm = easeInOut(seg(t, T.warm[0], T.warm[1]));
+    cap(t, 'year', '2026', T.s5c - 1);
+    cap(t, 'name', 'Соня, 2 года', T.name5);
+  }
+
+  // ---- 5D. Крупно: Соня отдаёт мишке свою заколку-сердечко
+  const BEAR5 = flat(BF5);
+  function billboard(p) { const f = norm(sub(S.CAM.pos, p)), r = norm(cross([0, 1, 0], f)); return { r, u: cross(f, r), f }; }
+  function shot5d(t) {
+    const E = ERA[2026];
+    useLight(E.light);
+    const bfr = frame(Y5);
+    const head = at(BEAR5, bfr, 0, 36 * BS, 1.5 * BS), ear = at(BEAR5, bfr, 8.8 * BS, 48.5 * BS, 2.2 * BS);
+    const st = { key: 'sonia', pos: S5, yaw: Y5 + PI, age: 2, crouch: 0.75, bend: 0.2, mood: 'smile', look: head };
+    const g0 = F.rig(SPEC.sonia, st);
+    const clipPos = F.surf(g0.cran, -0.75, 0.55, g0.hh * 0.04).p;
+    const rest = g0.arms[0].wrist;
+    const a1 = easeInOut(seg(t, T.s5d, T.clip[0])), a2 = easeInOut(seg(t, T.clip[0], T.clip[1])), a3 = easeInOut(seg(t, T.clip[1] + 0.05, T.clip[1] + 0.55));
+    const hand = lerp3(lerp3(lerp3(rest, clipPos, a1), ear, a2), rest, a3);
+    st.hands = [hand, null]; st.curl = 0.9;
+    st.clip = t < T.clip[0] ? 1 : 0;
+    const u = easeInOut(seg(t, T.s5d, T.s5e));
+    const tgt = add(lerp3(head, g0.cran.c, 0.55), [0, 2, 0]);
+    cam(sway({ pos: add(madd(madd(head, bfr.f, -lerp(50, 42, u)), bfr.r, 24), [0, 6, 0]), target: tgt, fov: 46 }, t, 0.5));
+    room(E, {});
+    F.human(SPEC.sonia, st);
+    bear(t, { pos: BEAR5, fr: bfr, ground: 0 });
+    if (t >= T.clip[0] && t < T.clip[1] - 0.1) S.push(S.depth(hand) - 3, () => F.drawHeart3('clipH', madd(hand, [0, 1, 0], 2), billboard(hand), g0.hh * 0.09, 1));
+    S.flush();
+    POST.warm = 1;
+  }
+
+  // ---- 5E. Кран вверх: все стираются, остаётся мишка
+  const CRANE5 = add(mul(R5, 60), mul(D5, -40)); // где кончается кран над мишкой
+  function shot5e(t) {
+    const E = ERA[2026];
+    useLight(E.light);
+    const u = easeInOut(seg(t, T.s5e, T.s6));
+    const bc = add(BEAR5, [0, 18, 0]);
+    cam({ pos: lerp3(add(add(mul(R5, 85), mul(D5, -25)), add(bc, [0, 40, 0])), add(CRANE5, add(bc, [0, 330, 0])), u), target: add(bc, [0, lerp(8, 0, u), 0]), fov: lerp(38, 46, u) });
+    const ea = erase(t, T.erase5[0], T.erase5[1]);
+    room(E, { al: ea });
+    const bfr = frame(Y5), head = at(BEAR5, bfr, 0, 36 * BS, 0);
+    F.human(SPEC.sonia, { key: 'sonia', pos: S5, yaw: Y5 + PI, age: 2, crouch: lerp(0.75, 0.2, seg(t, T.s5e, T.s5e + 0.8)), mood: 'smile', look: head, clip: 0, alpha: ea });
+    F.human(SPEC.anya75, { key: 'gran75', pos: [-195, -235], yaw: 0.75, age: 75, mood: 'smile', look: head, alpha: ea });
+    family(t, { look: head, al: ea, lena: [-60, -275], lenaYaw: 0.2, katya: [60, -175], katyaYaw: -1.6 });
+    bear(t, { pos: BEAR5, fr: bfr, ground: 0 });
+    S.flush();
+    POST.warm = 1 - 0.4 * seg(t, T.erase5[0], T.erase5[1]);
+  }
+
+  // ---- 6. Постер: камера слетает к мишке, сноски к следам поколений
+  function posterCam(t) {
+    const bc = add(BEAR5, [0, 18, 0]);
+    const a0 = Math.atan2(CRANE5[0], CRANE5[2]), r0 = Math.hypot(CRANE5[0], CRANE5[2]), y0 = 330 + 18;
+    const a1 = Y5 - 0.5, r1 = 112, y1 = 30;
+    const k = easeInOut(seg(t, T.orbit6[0], T.orbit6[1]));
+    const a = lerp(a0, a1, k), r = lerp(r0, r1, k), y = lerp(y0, y1, easeInOut(seg(k, 0, 0.85)));
+    const tg = add(bc, [0, lerp(0, 4, k), 0]);
+    const pos = [bc[0] + Math.sin(a) * r, y, bc[2] + Math.cos(a) * r];
+    // сдвиг: мишка правее центра, слева место для названия
+    const right = norm(cross(norm(sub(tg, pos)), [0, 1, 0]));
+    return { pos, target: madd(tg, right, -3 * k), fov: lerp(46, 30, k) };
+  }
+  function shot6(t) {
+    const bc = add(BEAR5, [0, 18, 0]);
+    useLight(add(bc, [-170, 240, 220]));
+    cam(posterCam(t));
+    const bfr = frame(Y5);
+    const B = bear(t, { pos: BEAR5, fr: bfr, ground: 0 });
+    S.flush();
+    POST.warm = 0.6;
+    if (!B) return;
+    // сноски
+    const L = B.L, hd = B.head;
+    const lg = F.BEAR.legs[1];
+    const anchors = [
+      F.surf(hd, -0.42, 0.12, 0.3 * BS).p,
+      L([8.8, 48.5, 2.2]),
+      L([7, 19, 10.8]),
+      madd(lerp3(L(lg.a), L(lg.b), 0.62), norm(add(mul(bfr.f, 0.6), [0, 0.8, 0])), lg.r[0] * BS * 0.95),
     ];
+    const notes = [
+      { text: 'пуговица — Аня, 1962', color: 'line', dx: -1, dy: -40 },
+      { text: 'заколка — Соня, 2026', color: 'warm', dx: 1, dy: -70 },
+      { text: 'шарф — бабушка Аня, 2003', color: 'a2', dx: 1, dy: 40 },
+      { text: 'заплатка — Лена, 1979', color: 'a1', dx: 1, dy: 120 },
+    ];
+    const G = P.L.graphite;
     notes.forEach((n, i) => {
-      const t0 = T.notes[i];
-      const pa = seg(t, t0, t0 + 0.35), pt = seg(t, t0 + 0.3, t0 + 0.9);
-      const mid = [lerp(n.from[0], n.to[0], 0.5), lerp(n.from[1], n.to[1], 0.5) - 40];
-      const pts = curve([n.from, mid, n.to], false, 10);
-      stroke(ctx, pts, { key: 'arrow' + i, color: n.color, w: 2.4, p: pa });
+      const q = S.proj(anchors[i]);
+      if (!q) return;
+      const t0 = T.notes[i], pa = seg(t, t0, t0 + 0.35), pt = seg(t, t0 + 0.3, t0 + 0.9);
+      if (pa <= 0) return;
+      const from = [q[0] + n.dx * 230, q[1] + n.dy];
+      const mid = [lerp(from[0], q[0], 0.5), lerp(from[1], q[1], 0.5) - 36];
+      const pts = P.curve([from, mid, [q[0] - n.dx * 10, q[1]]], false, 10);
+      P.stroke(G, pts, { key: 'arrow' + i, color: n.color, w: 2.4, p: pa });
       if (pa >= 1) {
         const e = pts[pts.length - 1], b2 = pts[pts.length - 4];
         const a = Math.atan2(e[1] - b2[1], e[0] - b2[0]);
-        for (const d of [-0.5, 0.5]) stroke(ctx, [e, [e[0] - Math.cos(a + d) * 18, e[1] - Math.sin(a + d) * 18]], { key: 'ah' + i + d, color: n.color, w: 2.4, sketch: false, gaps: false });
+        for (const d of [-0.5, 0.5]) P.stroke(G, [e, [e[0] - Math.cos(a + d) * 18, e[1] - Math.sin(a + d) * 18]], { key: 'ah' + i + d, color: n.color, w: 2.4, sketch: false, gaps: false });
       }
-      write(ctx, n.text, n.tx, n.ty, { key: 'note' + i, size: 46, p: pt, align: n.align });
+      const tx = from[0] + n.dx * 14, ty = from[1] + 14;
+      const tw = P.textWidth(G, n.text, 44);
+      S.knock([[[n.dx > 0 ? tx - 10 : tx - tw - 10, ty - 38], [n.dx > 0 ? tx + tw + 10 : tx + 10, ty - 38], [n.dx > 0 ? tx + tw + 10 : tx + 10, ty + 14], [n.dx > 0 ? tx - 10 : tx - tw - 10, ty + 14]]], 0.6 * pt);
+      write(G, n.text, tx, ty, { key: 'note' + i, size: 44, p: pt, align: n.dx > 0 ? 'left' : 'right' });
     });
+    write(G, 'Мишка', 110, 190, { key: 'p:title', size: 140, p: seg(t, T.title6[0], T.title6[1]), weight: 700 });
+    write(G, '1956 – 2026', 116, 270, { key: 'p:years', size: 62, p: seg(t, T.years6[0], T.years6[1]) });
+    write(G, 'Аня · Лена · Катя · Соня', 118, 336, { key: 'p:names', size: 44, p: seg(t, T.names6[0], T.names6[1]), color: 'soft' });
+    write(G, 'Он помнит всех, кого обнимал.', W / 2, 1040, { key: 'p:moral', size: 56, align: 'center', p: seg(t, T.moral[0], T.moral[1]) });
   }
-  function posterText(ctx, t) {
-    write(ctx, 'Мишка', 110, 190, { key: 'p:title', size: 140, p: seg(t, T.title6[0], T.title6[1]), weight: 700 });
-    write(ctx, '1956 – 2026', 116, 270, { key: 'p:years', size: 62, p: seg(t, T.years6[0], T.years6[1]) });
-    write(ctx, 'Аня · Лена · Катя · Соня', 118, 336, { key: 'p:names', size: 44, p: seg(t, T.names6[0], T.names6[1]), color: 'soft' });
-    write(ctx, 'Он помнит всех, кого обнимал.', W / 2, 1040, { key: 'p:moral', size: 56, align: 'center', p: seg(t, T.moral[0], T.moral[1]) });
-  }
+
+  const SHOTS = [
+    [-99, shot01], [T.s1b, shot1b], [T.s1c, shot1c], [T.s1d, shot1d],
+    [T.s2a, shot2a], [T.s2b, shot2b], [T.s2c, shot2c], [T.s2d, shot2d],
+    [T.s3a, shot3a], [T.s3b, shot3b],
+    [T.s4a, shot4a], [T.s4b, shot4b], [T.s4c, shot4c],
+    [T.s5a, shot5a], [T.s5b, shot5b], [T.s5c, shot5c], [T.s5d, shot5d], [T.s5e, shot5e], [T.s6, shot6],
+  ];
 
   // =====================================================================
   // КАДР
   // =====================================================================
   function renderFrame(main, tRaw) {
     // «на двойках»: рисунок меняется 12 раз в секунду
-    const t = Math.floor(tRaw * P.DRAW_FPS + 1e-6) / P.DRAW_FPS;
+    const t = Math.min(T.END, Math.floor(tRaw * P.DRAW_FPS + 1e-6) / P.DRAW_FPS);
     P.RS = main.canvas.width / W;
-    const inkCtx = P.begin(t);
+    P.begin(t);
     P.fade = t < T.TURN ? 1 : 1 - seg(t, T.TURN, T.TURN + 0.6);
-    POST.night = 0; POST.flash = 0; POST.warm = t >= T.warm[0] ? 1 : 0;
-    if (t < T.s2) scene1(inkCtx, t);
-    else if (t < T.s3) scene2(inkCtx, t);
-    else if (t < T.s4) scene3(inkCtx, t);
-    else if (t < T.s5) scene4(inkCtx, t);
-    else scene5(inkCtx, Math.min(t, T.END));
+    POST.night = 0; POST.flash = 0; POST.warm = 0; POST.dark = 0; POST.leak = null;
+    let fn = SHOTS[0][1];
+    for (const [t0, f] of SHOTS) if (t >= t0) fn = f;
+    fn(t);
     P.compose(main);
-    post(main, t);
+    post(main);
   }
-  function post(main, t) {
+  function post(main) {
     main.setTransform(P.RS, 0, 0, P.RS, 0, 0);
     if (POST.night > 0.01) {
       main.globalCompositeOperation = 'multiply';
-      const gr = main.createRadialGradient(1300, 330, 60, 1100, 600, 1300);
-      gr.addColorStop(0, P.col('night', 0.15 * POST.night));
-      gr.addColorStop(1, P.col('night', 0.55 * POST.night));
+      const gr = main.createRadialGradient(W * 0.5, H * 0.3, 60, W * 0.5, H * 0.5, 1300);
+      gr.addColorStop(0, P.col('night', 0.2 * POST.night));
+      gr.addColorStop(1, P.col('night', 0.6 * POST.night));
       main.fillStyle = gr; main.fillRect(0, 0, W, H);
+    }
+    if (POST.dark > 0.01) {
+      main.globalCompositeOperation = 'multiply';
+      if (POST.leak && POST.leak.a > 0.01) {
+        const L = POST.leak, gr = main.createRadialGradient(L.x, L.y, 10, L.x, L.y, 120 + 520 * L.a);
+        gr.addColorStop(0, P.col('night', POST.dark * (1 - 0.95 * L.a)));
+        gr.addColorStop(1, P.col('night', POST.dark));
+        main.fillStyle = gr;
+      } else main.fillStyle = P.col('night', POST.dark);
+      main.fillRect(0, 0, W, H);
+      if (POST.leak && POST.leak.a > 0.01) { // тонкая щель света
+        main.globalCompositeOperation = 'screen';
+        const L = POST.leak, gr = main.createLinearGradient(L.x - 260, L.y, L.x + 260, L.y);
+        gr.addColorStop(0, 'rgba(255,240,200,0)'); gr.addColorStop(0.5, `rgba(255,240,200,${0.8 * L.a})`); gr.addColorStop(1, 'rgba(255,240,200,0)');
+        main.fillStyle = gr; main.fillRect(L.x - 260, L.y - 3 - 10 * L.a, 520, 6 + 20 * L.a);
+      }
     }
     if (POST.warm > 0.01) {
       main.globalCompositeOperation = 'multiply';
-      main.fillStyle = `rgba(255,226,190,${0.35 * POST.warm})`;
+      main.fillStyle = `rgba(255,228,192,${0.3 * POST.warm})`;
       main.fillRect(0, 0, W, H);
       main.globalCompositeOperation = 'screen';
       const gr = main.createRadialGradient(W / 2, H * 0.55, 40, W / 2, H * 0.55, 900);
-      gr.addColorStop(0, `rgba(255,214,150,${0.22 * POST.warm})`);
+      gr.addColorStop(0, `rgba(255,214,150,${0.2 * POST.warm})`);
       gr.addColorStop(1, 'rgba(255,214,150,0)');
       main.fillStyle = gr; main.fillRect(0, 0, W, H);
     }
@@ -1569,33 +1242,33 @@
   // =====================================================================
   function soundEvents() {
     const ev = { scratch: [], ticks: [], marks: [], steps: [], chimes: [], hugs: [], clicks: [], stitches: [], thuds: [], puffs: [], knits: [], whoosh: [], ratchet: T.crack, turn: T.TURN, notes: [] };
-    // карандаш шуршит, когда рисует
-    ev.scratch.push([0.0, T.bearDraw[1], 0.9], [T.title[0], T.sub[1], 0.6], [T.tree[0], T.door1[1], 0.7], [T.anyaIn[0], T.anyaIn[1], 0.6],
-      [T.room2[0], T.room2[1], 0.7], [T.patch[0], T.patch[1], 0.5], [T.box2[0], T.box2[1], 0.5], [T.attic[0], T.attic[1], 0.45],
-      [T.room4[0], T.room4[1], 0.7], [T.granIn[0], T.granIn[1], 0.5], [T.scarf[0], T.scarf[1], 0.4], [T.room5[0], T.family5[1], 0.7],
-      [T.title6[0], T.moral[1], 0.6]);
+    ev.scratch.push([0.0, T.bearDraw[1], 0.9], [T.title[0], T.sub[1], 0.6], [T.room1[0], T.room1[1], 0.7], [T.anyaIn[0], T.anyaIn[1], 0.5],
+      [T.patch[0], T.patch[1], 0.35], [T.kat3[0], T.kat3[1], 0.4], [T.granIn[0], T.granIn[1], 0.5], [T.room5[0], T.room5[1] + 0.3, 0.7],
+      [T.labels5, T.labels5 + 1.2, 0.45], [T.title6[0], T.moral[1], 0.6]);
     T.notes.forEach((n) => ev.scratch.push([n, n + 0.9, 0.55]));
     for (const g of [GENS.anya, GENS.lena, GENS.katya]) {
-      for (let a = Math.floor(g.from) + 1; a <= g.to; a++) ev.ticks.push(ageCrossTime(g, a));
-      for (const a of g.ages) ev.marks.push(ageCrossTime(g, a) + 0.02);
+      for (let a = Math.floor(g.from) + 1; a <= g.to; a++) ev.ticks.push(ageCross(g, a));
+      for (const a of g.ages) ev.marks.push(ageCross(g, a) + 0.02);
     }
     for (let y = 1; y <= 10; y++) ev.ticks.push(lerp(T.years3[0], T.years3[1], y / 10));
-    const walk = (w, n) => { for (let i = 0; i < n; i++) ev.steps.push(lerp(w[0], w[1], (i + 0.5) / n)); };
-    walk(T.anyaWalk, 4); walk(T.walkDoor1, 5); walk(T.walkDoor2, 4); walk(T.walkDoor4, 4);
-    ev.chimes.push(T.hug1[0] + 0.35, T.give2[1] - 0.1, T.hug4[0] + 0.3, T.give5[1] - 0.1, T.clip[1]);
-    ev.hugs.push(T.hug1[1] - 0.1, T.give2[1], T.hug4[1] - 0.1, T.give5[1] + 0.05);
+    for (let i = 0; i < 8; i++) ev.steps.push(lerp(T.run1[0], T.run1[1] - 0.2, Math.pow(i / 7, 1.25)));
+    for (let i = 0; i < 7; i++) ev.steps.push(lerp(T.toddle[0] + 0.1, T.toddle[1] - 0.1, i / 6));
+    ev.chimes.push(T.lift1[1] - 0.1, T.give2[1] - 0.1, T.spin4[0] + 0.3, T.give5[1] - 0.1, T.clip[1]);
+    ev.hugs.push(T.lift1[1], T.give2[1], T.spin4[0] + 0.15, T.give5[1] + 0.05);
     ev.clicks.push(T.button[0] + 0.25);
-    for (let i = 0; i < 5; i++) ev.stitches.push(lerp(T.patch[0] + 0.2, T.patch[1], i / 4));
-    ev.thuds.push(T.lidClose[1]);
+    for (let i = 0; i < 6; i++) ev.stitches.push(lerp(T.patch[0] + 0.15, T.patch[1], i / 5));
+    for (const s of ['l', 'r', 'b', 'f']) ev.thuds.push(FLAPS2[s][1]);
     ev.puffs.push(T.puff[0] + 0.1);
-    for (let i = 0; i < 8; i++) ev.knits.push(lerp(T.scarf[0], T.scarf[1], i / 7));
-    ev.whoosh.push(T.pull1[0], T.exit1[1] - 0.3, T.exit2[1] - 0.3, T.rise[0] + 0.1, T.exit4[1] - 0.3, T.toPoster[0]);
+    for (let i = 0; i < 9; i++) ev.knits.push(lerp(T.scarf[0], T.scarf[1], i / 8));
+    ev.whoosh.push(4.7, T.spin1[0], T.s2a, T.s3a, T.open3[0] + 0.05, T.spin4[0], T.s5a, T.s5e + 0.3, T.s6 + 0.2);
     ev.notes = T.notes.slice();
     return ev;
   }
 
   P.setTheme(THEME);
-  global.STORY = { T, THEME, renderFrame, soundEvents, setTheme: P.setTheme, chapters: [
-    { t: 0, label: 'Мишка' }, { t: 4.4, label: '1956' }, { t: T.s2, label: '1979' }, { t: T.s3, label: 'чердак' },
-    { t: T.s4, label: '2003' }, { t: T.s5, label: '2026' }, { t: T.s6, label: 'постер' }] };
+  global.STORY = {
+    T, THEME, renderFrame, soundEvents, setTheme: P.setTheme,
+    chapters: [{ t: 0, label: 'Мишка' }, { t: T.s1a, label: '1956' }, { t: T.s2a, label: '1979' }, { t: T.s3a, label: 'чердак' },
+      { t: T.s4a, label: '2003' }, { t: T.s5a, label: '2026' }, { t: T.s6, label: 'постер' }],
+  };
 })(typeof window !== 'undefined' ? window : globalThis);

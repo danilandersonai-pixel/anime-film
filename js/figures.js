@@ -381,7 +381,7 @@
     }
     // заколка-сердечко у Сони
     if (st.clip > 0) {
-      const s = surf(cran, 0.75, 0.55, hh * 0.04);
+      const s = surf(cran, -0.75, 0.55, hh * 0.04);
       S.push(S.depth(s.p) - hh, () => drawHeart3(k + ':clip', s.p, { r: cran.fr.r, u: cran.fr.u, f: s.n }, hh * 0.09, al * st.clip));
     }
   }

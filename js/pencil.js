@@ -348,10 +348,57 @@
   // ---------------------------------------------------------------------
   // Линия карандаша: лента с нажимом, сужением, разрывами и кипением
   // ---------------------------------------------------------------------
+  // обрезка ломаной по прямоугольнику (Лианг — Барски для каждого отрезка)
+  function clipSeg(ax, ay, bx, by, x0, y0, x1, y1) {
+    let t0 = 0, t1 = 1;
+    const dx = bx - ax, dy = by - ay;
+    const pp = [-dx, dx, -dy, dy], qq = [ax - x0, x1 - ax, ay - y0, y1 - ay];
+    for (let i = 0; i < 4; i++) {
+      if (pp[i] === 0) { if (qq[i] < 0) return null; continue; }
+      const r = qq[i] / pp[i];
+      if (pp[i] < 0) { if (r > t1) return null; if (r > t0) t0 = r; } else { if (r < t0) return null; if (r < t1) t1 = r; }
+    }
+    return [t0, t1];
+  }
+  function clipPolyline(pts, x0, y0, x1, y1) {
+    const parts = [];
+    let cur = null;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const a = pts[i], b = pts[i + 1];
+      const c = clipSeg(a[0], a[1], b[0], b[1], x0, y0, x1, y1);
+      if (!c) { if (cur) { parts.push(cur); cur = null; } continue; }
+      const pa = c[0] > 0 ? [a[0] + (b[0] - a[0]) * c[0], a[1] + (b[1] - a[1]) * c[0]] : a;
+      const pb = c[1] < 1 ? [a[0] + (b[0] - a[0]) * c[1], a[1] + (b[1] - a[1]) * c[1]] : b;
+      if (!cur) cur = [pa];
+      else if (c[0] > 0) { parts.push(cur); cur = [pa]; }
+      cur.push(pb);
+      if (c[1] < 1) { parts.push(cur); cur = null; }
+    }
+    if (cur) parts.push(cur);
+    return parts.filter((q) => q.length >= 2);
+  }
+
   function stroke(ctx, pts, o = {}) {
     const alpha = o.alpha === undefined ? 1 : o.alpha;
     const prog = o.p === undefined ? 1 : o.p;
     if (alpha <= 0.004 || prog <= 0.001 || !pts || pts.length < 2) return;
+    // линия, уходящая далеко за край кадра, обрезается по краю — иначе карандаш
+    // прорисовывает тысячи невидимых точек (пол и стены рядом с камерой)
+    if (PEN.view && !o.clipped && !PEN.noClip) {
+      const vw = PEN.view, M = 20 / PEN.z;
+      const x0 = vw[0] - M, y0 = vw[1] - M, x1 = vw[2] + M, y1 = vw[3] + M;
+      let out = false;
+      for (const q of pts) if (q[0] < x0 || q[0] > x1 || q[1] < y0 || q[1] > y1) { out = true; break; }
+      if (out) {
+        const parts = clipPolyline(o.closed ? pts.concat([pts[0]]) : pts, x0, y0, x1, y1);
+        if (o.closed && parts.length > 1) { // замкнутый контур: склеить кусок до начальной точки с куском после неё
+          const f = parts[0], l = parts[parts.length - 1];
+          if (f[0] === pts[0] && l[l.length - 1] === pts[0]) { parts[0] = l.concat(f.slice(1)); parts.pop(); }
+        }
+        parts.forEach((part, i) => stroke(ctx, part, Object.assign({}, o, { key: (o.key || 'stroke') + '#' + i, closed: false, wAt: null, clipped: true })));
+        return;
+      }
+    }
     const z = PEN.z;
     const key = o.key || 'stroke';
     const w = (o.w === undefined ? 2.6 : o.w) / z;

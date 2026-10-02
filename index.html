@@ -58,8 +58,8 @@ canvas { display: block; width: 100%; height: 100%; cursor: pointer; }
 .ruler { position: relative; flex: 1 1 360px; min-width: 0; height: 58px; }
 .ruler .scale { position: absolute; left: 0; right: 0; top: 10px; height: 22px; border-top: 2px solid var(--lead);
   background:
-    repeating-linear-gradient(90deg, var(--lead) 0 1px, transparent 1px calc(100% / 58)) top left / 100% 7px no-repeat,
-    repeating-linear-gradient(90deg, var(--lead) 0 2px, transparent 2px calc(100% / 11.6)) top left / 100% 13px no-repeat; opacity: 0.8; }
+    repeating-linear-gradient(90deg, var(--lead) 0 1px, transparent 1px calc(100% / 64)) top left / 100% 7px no-repeat,
+    repeating-linear-gradient(90deg, var(--lead) 0 2px, transparent 2px calc(100% / 12.8)) top left / 100% 13px no-repeat; opacity: 0.8; }
 .ruler .done { position: absolute; left: 0; top: 9px; height: 4px; width: 0; background: var(--pencil); border-radius: 2px; }
 .ruler ol { list-style: none; margin: 0; padding: 0; position: absolute; left: 0; right: 0; top: 32px; height: 24px; }
 .ruler li { position: absolute; transform: translateX(-2px); font: 600 19px/1 var(--display); color: var(--muted); white-space: nowrap; }
@@ -91,7 +91,7 @@ button:focus-visible { outline: 2px solid var(--pencil); outline-offset: 2px; }
 <main class="wrap">
   <header>
     <h1>Мишка</h1>
-    <p>Мультфильм цветными мелками о плюшевом мишке, который семьдесят лет переходил в одной семье от бабушки к правнучке. 58 секунд, рисунок, свет и звук собраны кодом.</p>
+    <p>Мультфильм цветными мелками о плюшевом мишке, который семьдесят лет переходил в одной семье от бабушки к правнучке. 64 секунды, рисунок, свет, камера и звук собраны кодом.</p>
   </header>
 
   <figure class="stage">
@@ -106,12 +106,12 @@ button:focus-visible { outline: 2px solid var(--pencil); outline-offset: 2px; }
     <button id="play" class="btn" type="button" aria-label="Смотреть">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path id="playIcon" d="M7 4.5v15l12.5-7.5z"/></svg>
     </button>
-    <span class="clock" id="clock">0:00 / 0:58</span>
+    <span class="clock" id="clock">0:00 / 1:04</span>
     <div class="ruler">
       <div class="scale"></div>
       <div class="done" id="done"></div>
       <ol id="chapters"></ol>
-      <input type="range" id="seek" min="0" max="58" step="0.01" value="0" aria-label="Перемотка">
+      <input type="range" id="seek" min="0" max="64" step="0.01" value="0" aria-label="Перемотка">
     </div>
     <button id="mute" class="btn" type="button" aria-pressed="false">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path id="muteIcon" d="M4 9h4l5-4v14l-5-4H4z M16 8.5a5 5 0 0 1 0 7 M18.5 6a8.5 8.5 0 0 1 0 12" stroke="currentColor" stroke-width="1.8" fill="currentColor" stroke-linecap="round"/></svg>
@@ -128,6 +128,8 @@ button:focus-visible { outline: 2px solid var(--pencil); outline-offset: 2px; }
 </main>
 
 <script src="js/pencil.js"></script>
+<script src="js/space.js"></script>
+<script src="js/figures.js"></script>
 <script src="js/story.js"></script>
 <script src="js/sound.js"></script>
 <script src="js/player.js"></script>

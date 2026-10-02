@@ -78,7 +78,28 @@
     if (!closed && cs[n - 1][2] >= near) out.push(cs[n - 1]);
     return out;
   }
-  function projPoly(pts) { return clipNear(pts.map(toCam)).map((c) => projC(c)); }
+  // обрезка многоугольника прямоугольником кадра (Сазерленд — Ходжмен):
+  // плоскости рядом с камерой проецируются на сотни тысяч пикселей
+  function clipRect(poly, x0, y0, x1, y1) {
+    let out = poly;
+    for (const [ax, v, sg] of [[0, x0, 1], [0, x1, -1], [1, y0, 1], [1, y1, -1]]) {
+      const inp = out;
+      out = [];
+      for (let i = 0; i < inp.length; i++) {
+        const a = inp[i], b = inp[(i + 1) % inp.length];
+        const ina = sg * (a[ax] - v) >= 0, inb = sg * (b[ax] - v) >= 0;
+        if (ina) out.push(a);
+        if (ina !== inb) { const t = (v - a[ax]) / (b[ax] - a[ax]); out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, lerp(a[2], b[2], t), lerp(a[3], b[3], t)]); }
+      }
+      if (!out.length) break;
+    }
+    return out;
+  }
+  function projPoly(pts) {
+    const pp = clipNear(pts.map(toCam)).map((c) => projC(c));
+    const M = 120;
+    return pp.length < 3 ? pp : clipRect(pp, -M, -M, W + M, H + M);
+  }
   // ломаная → видимые куски
   function projLine(pts) {
     const cs = pts.map(toCam), parts = [];
@@ -410,7 +431,7 @@
     screenAngle, hull, ringScreen, ray, hitEll, knockShape,
     add, sub, mul, madd, dot, cross, len, norm, lerp3, rot, frame, at, dirIn,
     CAM, setCamera, toCam, proj, projC, depth, nS, toViewer, LIGHT, lightS,
-    clipNear, projPoly, projLine, jac, projEll, sectionHalf,
+    clipNear, clipRect, projPoly, projLine, jac, projEll, sectionHalf,
     push, flush, knock, ellPts, ellPoly, tubeShape, tubeOutline, unionOutline, weightFn,
     ellAxes, drawEll, projTube, drawTube, drawPoly, line, ring, floorShadow,
   };
