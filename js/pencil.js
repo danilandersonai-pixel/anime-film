@@ -15,6 +15,7 @@
 
   const W = 1920, H = 1080;
   const DRAW_FPS = 12;   // сколько разных рисунков в секунду
+  const CS = 0.5;        // слой мелка рисуем в половинном разрешении: он мягкий, а так вчетверо быстрее
   const VIDEO_FPS = 24;  // кадров в секунду в видео
 
   // ---------------------------------------------------------------------
@@ -60,31 +61,38 @@
   // ---------------------------------------------------------------------
   // Палитры: бумага + роли цветов. Сцены рисуют ролями, не цветами.
   // ---------------------------------------------------------------------
-  const THEMES = {
-    paper: {
-      title: 'Старая бумага',
-      paper: '#ebe2cd', stain: '#c7b08a', fiber: '#a8936f', grid: null, margin: null,
-      line: '#29282d', soft: '#615c60', guide: '#6c9bd6',
-      fur: '#b67f3e', a1: '#3a64ad', a2: '#4a8a55', warm: '#e2483a', light: '#fff4d6',
-      night: '#2c3346', inkOnDark: false,
-    },
-    notebook: {
-      title: 'Тетрадь',
-      paper: '#f6f5ef', stain: '#d9d4c4', fiber: '#c4bfae', grid: '#a8c4e2', margin: '#e48b84',
-      line: '#2f3036', soft: '#62626a', guide: '#7aa4d8',
-      fur: '#c08d4a', a1: '#2f5fb3', a2: '#2f8f55', warm: '#ef7f2c', light: '#fff7e2',
-      night: '#2a3550', inkOnDark: false,
-    },
-    kraft: {
-      title: 'Крафт',
-      paper: '#c39f74', stain: '#8f6c45', fiber: '#7a5a38', grid: null, margin: null,
-      line: '#33210f', soft: '#5d4329', guide: '#f2ead9',
-      fur: '#7c4e22', a1: '#284a8c', a2: '#f6f0e3', warm: '#b72d24', light: '#fff1d2',
-      night: '#2a2118', inkOnDark: false,
-    },
+  // общие роли для мелков: кожа, волосы, стены по эпохам, пол, тень
+  const CRAYON = {
+    skin: '#efbd96', cream: '#f4e2bd', shadow: '#3e3f6c',
+    hairDark: '#4b3428', hairBrown: '#86532e', hairGinger: '#d27a33', hairFair: '#e3b257', hairGray: '#bdb7b0',
+    wallA: '#9db3c6', wallB: '#dcb468', wallC: '#a8c69a', wallD: '#f1c49b', floor: '#a9733d', cardboard: '#c99b5f',
   };
-  // роли, которые выцветают в «прошлом» (до поворота сюжета)
-  const FADEABLE = { fur: 1, a1: 1, a2: 1, warm: 1, guide: 0 };
+  const THEMES = {
+    paper: Object.assign({}, CRAYON, {
+      title: 'Старая бумага',
+      paper: '#e6dac1', stain: '#c2aa83', fiber: '#a48d69', grid: null, margin: null,
+      line: '#29262e', soft: '#5f5960', guide: '#6c9bd6',
+      fur: '#c8853c', a1: '#3d6fc2', a2: '#4f9b59', warm: '#e6473a', light: '#fffaf0',
+      night: '#2c3346',
+    }),
+    notebook: Object.assign({}, CRAYON, {
+      title: 'Тетрадь',
+      paper: '#f3f2ea', stain: '#d6d1c0', fiber: '#c4bfae', grid: '#a8c4e2', margin: '#e48b84',
+      line: '#2f3036', soft: '#62626a', guide: '#7aa4d8',
+      fur: '#c98d47', a1: '#2f62bb', a2: '#2f914f', warm: '#ef7d2a', light: '#ffffff',
+      night: '#2a3550',
+    }),
+    kraft: Object.assign({}, CRAYON, {
+      title: 'Крафт',
+      paper: '#c19d71', stain: '#8c6942', fiber: '#775737', grid: null, margin: null,
+      line: '#2c1b0c', soft: '#57402a', guide: '#f3ecdc',
+      fur: '#8f5525', a1: '#2b4f96', a2: '#3f7a43', warm: '#bd2b22', light: '#fff8ea',
+      skin: '#f3c9a3', cream: '#f8ecd2', shadow: '#33263a', wallA: '#7f93a6', wallB: '#c99a4d', wallC: '#879f78', wallD: '#e0a77a', floor: '#6f4420',
+      night: '#2a2118',
+    }),
+  };
+  // эти роли не выцветают в «прошлом» (до поворота сюжета)
+  const NOFADE = { line: 1, soft: 1, guide: 1, paper: 1, stain: 1, fiber: 1, light: 1, night: 1 };
 
   function hex2rgb(h) {
     h = h.replace('#', '');
@@ -101,16 +109,29 @@
     for (const k of Object.keys(th)) if (typeof th[k] === 'string' && th[k][0] === '#') PEN.rgb[k] = hex2rgb(th[k]);
     PEN.paperCanvas = makePaper(th);
     if (!PEN.grainCanvas) PEN.grainCanvas = makeGrain();
+    if (!PEN.crayonGrain) PEN.crayonGrain = makeCrayonGrain();
   }
 
-  // цвет роли с учётом «выцветания прошлого»
+  // цвет роли с учётом «выцветания прошлого»; 'fur:sh' — тень, 'fur:lt' — свет, 'fur:dk' — темнее
+  const rgbCache = new Map();
   function rgbOf(role) {
-    let c = PEN.rgb[role] || (role[0] === '#' ? hex2rgb(role) : PEN.rgb.line);
-    if (PEN.fade > 0 && FADEABLE[role]) {
+    const ck = role + '|' + PEN.fade.toFixed(3) + '|' + PEN.themeName;
+    const hit = rgbCache.get(ck);
+    if (hit) return hit;
+    let base = role, suffix = null;
+    const ix = role.indexOf(':');
+    if (ix > 0) { base = role.slice(0, ix); suffix = role.slice(ix + 1); }
+    let c = PEN.rgb[base] || (base[0] === '#' ? hex2rgb(base) : PEN.rgb.line);
+    if (suffix === 'sh') c = mixc(mixc(c, PEN.rgb.shadow, 0.5), [0, 0, 0], 0.12);
+    else if (suffix === 'lt') c = mixc(c, PEN.rgb.light, 0.5);
+    else if (suffix === 'dk') c = mixc(c, [0, 0, 0], 0.3);
+    if (PEN.fade > 0 && !NOFADE[base]) {
       const g = lum(c);
       const sepia = mixc([g, g, g], PEN.rgb.stain, 0.45);
       c = mixc(c, mixc(sepia, PEN.rgb.paper, 0.15), PEN.fade * 0.78);
     }
+    if (rgbCache.size > 4000) rgbCache.clear();
+    rgbCache.set(ck, c);
     return c;
   }
   function col(role, a = 1) {
@@ -580,42 +601,351 @@
   // ---------------------------------------------------------------------
   // Кадр: слой графита → зерно → на бумагу
   // ---------------------------------------------------------------------
-  function begin(t, ink) {
+  // RS — внутреннее разрешение (1 = 1920×1080). Плеер снижает его на медленных устройствах.
+  function begin(t) {
     PEN.t = t;
     PEN.frame = Math.floor(t * DRAW_FPS + 1e-6) + 1000;
-    PEN.ink = ink;
-    ink.setTransform(1, 0, 0, 1, 0, 0);
-    ink.globalCompositeOperation = 'source-over';
-    ink.globalAlpha = 1;
-    ink.clearRect(0, 0, W, H);
+    const RS = PEN.RS || 1;
+    const gw = Math.round(W * RS), gh = Math.round(H * RS);
+    if (!PEN.L || PEN.L.graphite.canvas.width !== gw) {
+      const graphite = makeCanvas(gw, gh).getContext('2d');
+      const color = makeCanvas(Math.round(gw * CS), Math.round(gh * CS)).getContext('2d');
+      PEN.L = { color, light: color, graphite };
+      PEN.layers = [color, graphite];
+    }
+    for (const c of PEN.layers) {
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.globalCompositeOperation = 'source-over';
+      c.globalAlpha = 1;
+      c.clearRect(0, 0, c.canvas.width, c.canvas.height);
+    }
+    screen();
+    PEN.ink = PEN.L.graphite;
+    return PEN.L.graphite;
   }
+  const layerScale = (c) => (PEN.RS || 1) * (c === PEN.L.color ? CS : 1);
   function camera(ctx, cam) {
     PEN.z = cam.z;
     PEN.cam = cam;
-    ctx.setTransform(cam.z, 0, 0, cam.z, W / 2 - cam.x * cam.z, H / 2 - cam.y * cam.z);
-  }
-  function screen(ctx) {
-    PEN.z = 1;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-  }
-  function compose(main, ink) {
-    // зуб бумаги: выкусываем крапинки из графита
-    ink.setTransform(1, 0, 0, 1, 0, 0);
-    ink.globalCompositeOperation = 'destination-out';
-    if (!PEN.grainPattern || PEN.grainPatternCtx !== ink) {
-      PEN.grainPattern = ink.createPattern(PEN.grainCanvas, 'repeat');
-      PEN.grainPatternCtx = ink;
+    for (const c of PEN.layers) {
+      const k = layerScale(c);
+      c.setTransform(cam.z * k, 0, 0, cam.z * k, (W / 2 - cam.x * cam.z) * k, (H / 2 - cam.y * cam.z) * k);
     }
-    ink.globalAlpha = 0.75;
-    ink.fillStyle = PEN.grainPattern;
-    ink.fillRect(0, 0, W, H);
-    ink.globalAlpha = 1;
-    ink.globalCompositeOperation = 'source-over';
+  }
+  function screen() {
+    PEN.z = 1;
+    for (const c of PEN.layers) { const k = layerScale(c); c.setTransform(k, 0, 0, k, 0, 0); }
+  }
+  // зуб бумаги: выкусываем крапинки из слоя
+  function grainOut(ctx, tile, alpha, ox, oy) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = 'destination-out';
+    if (!ctx._pat || ctx._patTile !== tile) { ctx._pat = ctx.createPattern(tile, 'repeat'); ctx._patTile = tile; }
+    ctx.globalAlpha = alpha;
+    ctx.translate(ox, oy);
+    ctx.fillStyle = ctx._pat;
+    ctx.fillRect(-ox, -oy, ctx.canvas.width, ctx.canvas.height);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  }
+  function compose(main) {
+    const L = PEN.L, ink = L.graphite;
+    grainOut(L.color, PEN.crayonGrain, 0.88, 0, 0);
+    grainOut(ink, PEN.grainCanvas, 0.75, 0, 0);
+    const mw = main.canvas.width, mh = main.canvas.height;
     main.setTransform(1, 0, 0, 1, 0, 0);
     main.globalCompositeOperation = 'source-over';
     main.globalAlpha = 1;
-    main.drawImage(PEN.paperCanvas, 0, 0);
-    main.drawImage(ink.canvas, 0, 0);
+    main.imageSmoothingEnabled = true;
+    main.imageSmoothingQuality = 'high';
+    main.drawImage(PEN.paperCanvas, 0, 0, mw, mh);
+    main.drawImage(L.color.canvas, 0, 0, mw, mh);
+    main.drawImage(ink.canvas, 0, 0, mw, mh);
+  }
+
+  // =====================================================================
+  // МЕЛКИ И ОБЪЁМ
+  // ---------------------------------------------------------------------
+  // Каждая форма знает свою нормаль. Свет — точка в мире (окно, луна,
+  // коробка). Тон считается как скалярное произведение нормали и света:
+  // светлая сторона — мелок и блики, полутень — второй слой мелка,
+  // тень — холодный тёмный мелок и графитная штриховка, у края — рефлекс.
+  // =====================================================================
+
+  // крупное зерно мелка: воск не попадает в ямки бумаги
+  function makeCrayonGrain() {
+    const N = 512;
+    const c = makeCanvas(N, N), g = c.getContext('2d');
+    const r = rng(hashStr('crayon-grain'));
+    const lat = (cells) => { const a = new Float32Array(cells * cells); for (let i = 0; i < a.length; i++) a[i] = r(); return a; };
+    const noise = (lt, cells, x, y) => {
+      const fx = x / N * cells, fy = y / N * cells, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
+      const k = (a, b) => lt[((b % cells) + cells) % cells * cells + ((a % cells) + cells) % cells];
+      const sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty);
+      return lerp(lerp(k(ix, iy), k(ix + 1, iy), sx), lerp(k(ix, iy + 1), k(ix + 1, iy + 1), sx), sy);
+    };
+    const l1 = lat(256), l2 = lat(96), l3 = lat(24);
+    const id = g.createImageData(N, N);
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      // волокна бумаги слегка вытянуты по горизонтали
+      const n = 0.5 * noise(l1, 256, x * 0.75, y) + 0.3 * noise(l2, 96, x, y) + 0.12 * noise(l3, 24, x, y) + 0.08 * r();
+      const a = clamp((n - 0.5) * 3.4);
+      const i = (y * N + x) * 4;
+      id.data[i + 3] = a * 255;
+    }
+    g.putImageData(id, 0, 0);
+    return c;
+  }
+
+  // свет: точка (x, y) в мире и высота z «к зрителю»
+  function lightAt(cx, cy) {
+    const L = PEN.light || { x: 300, y: 0, z: 900 };
+    let lx = L.x - cx, ly = L.y - cy, lz = L.z;
+    const d = Math.hypot(lx, ly, lz) || 1;
+    return [lx / d, ly / d, lz / d];
+  }
+
+  // ---- формы: test(x, y) → нормаль [nx, ny, nz] или null (вне формы)
+  function ellShape(cx, cy, rx, ry, rot = 0, flat = 1) {
+    const c = Math.cos(rot), s = Math.sin(rot), R = Math.max(rx, ry);
+    return {
+      cx, cy, x0: cx - R, y0: cy - R, x1: cx + R, y1: cy + R,
+      test(x, y) {
+        const dx = x - cx, dy = y - cy;
+        const u = (dx * c + dy * s) / rx, v = (-dx * s + dy * c) / ry;
+        const r2 = u * u + v * v;
+        if (r2 > 1) return null;
+        const nz = Math.sqrt(1 - r2) * flat, nx = u * c - v * s, ny = u * s + v * c;
+        const l = Math.hypot(nx, ny, nz) || 1;
+        return [nx / l, ny / l, nz / l];
+      },
+    };
+  }
+  // многоугольник как вертикальный цилиндр (платье, ствол) или плоскость (normal).
+  // Вогнутые формы (причёска-подкова вокруг лица) красятся по правилу чёт-нечет.
+  function polyShape(poly, o = {}) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [x, y] of poly) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    const h = Math.max(1.5, (y1 - y0) / 160);
+    const rows = Math.ceil((y1 - y0) / h) + 1;
+    const xsRow = new Array(rows);
+    for (let r = 0; r < rows; r++) {
+      const y = y0 + r * h, xs = [];
+      for (let i = 0; i < poly.length; i++) {
+        const a = poly[i], b = poly[(i + 1) % poly.length];
+        if ((a[1] <= y && b[1] > y) || (b[1] <= y && a[1] > y)) xs.push(a[0] + (y - a[1]) / (b[1] - a[1]) * (b[0] - a[0]));
+      }
+      if (xs.length >= 2) { xs.sort((p, q) => p - q); xsRow[r] = xs; }
+    }
+    const n0 = o.normal ? (() => { const l = Math.hypot(...o.normal); return o.normal.map((v) => v / l); })() : null;
+    const round = o.round === undefined ? 0.92 : o.round;
+    return {
+      cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, x0, y0, x1, y1,
+      test(x, y) {
+        const r = Math.round((y - y0) / h);
+        if (r < 0 || r >= rows) return null;
+        const xs = xsRow[r];
+        if (!xs) return null;
+        let inside = false;
+        for (let i = 0; i + 1 < xs.length; i += 2) if (x >= xs[i] && x <= xs[i + 1]) { inside = true; break; }
+        if (!inside) return null;
+        if (n0) return n0;
+        const l = xs[0], rr = xs[xs.length - 1];
+        const half = (rr - l) / 2 || 1;
+        const u = clamp((x - (l + rr) / 2) / half, -1, 1) * round;
+        const vy = o.vy ? o.vy((y - y0) / (y1 - y0)) : 0;
+        const nz = Math.sqrt(Math.max(0.02, 1 - u * u - vy * vy));
+        const len = Math.hypot(u, vy, nz);
+        return [u / len, vy / len, nz / len];
+      },
+    };
+  }
+  const rectShape = (x0, y0, x1, y1, normal = [0, 0, 1]) => polyShape([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], { normal });
+  // «трубка» вдоль ломаной (руки, ноги, ветки)
+  function capsuleShape(pts, w0, w1 = w0) {
+    const segs = [];
+    let total = 0, x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const a = pts[i], b = pts[i + 1], len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1e-6;
+      segs.push({ a, b, len, at: total });
+      total += len;
+    }
+    const wm = Math.max(w0, w1);
+    for (const [x, y] of pts) { x0 = Math.min(x0, x - wm); x1 = Math.max(x1, x + wm); y0 = Math.min(y0, y - wm); y1 = Math.max(y1, y + wm); }
+    return {
+      cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, x0, y0, x1, y1,
+      test(x, y) {
+        let best = null;
+        for (const sg of segs) {
+          const dx = sg.b[0] - sg.a[0], dy = sg.b[1] - sg.a[1];
+          const t = clamp(((x - sg.a[0]) * dx + (y - sg.a[1]) * dy) / (sg.len * sg.len));
+          const px = sg.a[0] + dx * t, py = sg.a[1] + dy * t;
+          const d = Math.hypot(x - px, y - py);
+          const w = lerp(w0, w1, (sg.at + t * sg.len) / (total || 1));
+          const u = d / w;
+          if (u <= 1 && (!best || u < best.u)) best = { u, nx: d ? (x - px) / d : 0, ny: d ? (y - py) / d : 0 };
+        }
+        if (!best) return null;
+        const nz = Math.sqrt(1 - best.u * best.u);
+        return [best.nx * best.u, best.ny * best.u, nz];
+      },
+    };
+  }
+
+  // ---- широкие штрихи мелка внутри формы, где выполнено условие cond(n, x, y)
+  // Неподвижный фон (still) рисуется в мировых единицах и считается один раз.
+  const segCache = new Map();
+  function buildSegs(shape, o, z, key) {
+    const r = o.still ? staticRng(key) : boilRng(key);
+    const ang = (o.angle === undefined ? -0.9 : o.angle) + (r() - 0.5) * 0.1;
+    const dk = PEN.detail || 1; // детализация: на медленных устройствах штрихи шире и реже
+    const gap = (o.gap || 7) * dk / z, w = (o.w || 8) * Math.sqrt(dk) / z, step = (o.step || 5) * dk / z;
+    const maxLen = (o.maxLen || 70) / z, jit = (o.jitter === undefined ? 5 : o.jitter) / z;
+    const bow = o.bow === undefined ? 0.07 : o.bow;
+    const ca = Math.cos(ang), sa = Math.sin(ang);
+    let pmin = Infinity, pmax = -Infinity, dmin = Infinity, dmax = -Infinity;
+    for (const [cx, cy] of [[shape.x0, shape.y0], [shape.x1, shape.y0], [shape.x1, shape.y1], [shape.x0, shape.y1]]) {
+      const pp = -sa * cx + ca * cy, dd = ca * cx + sa * cy;
+      if (pp < pmin) pmin = pp; if (pp > pmax) pmax = pp; if (dd < dmin) dmin = dd; if (dd > dmax) dmax = dd;
+    }
+    const segs = [];
+    const emit = (off, s0, s1) => {
+      const a = s0 + (r() - 0.35) * jit, b = s1 + (r() - 0.65) * jit;
+      if (b - a < w * 0.7) { r(); return; }
+      segs.push([ca * a - sa * off, sa * a + ca * off, ca * b - sa * off, sa * b + ca * off, r(), (b - a) * bow * (r() < 0.5 ? 1 : -1)]);
+    };
+    const cond = o.cond;
+    for (let off = pmin + r() * gap; off < pmax; off += gap * (0.8 + r() * 0.4)) {
+      let run = null;
+      const off2 = off + (r() - 0.5) * gap * 0.3;
+      for (let s = dmin; s <= dmax + step; s += step) {
+        let ok = false;
+        if (s <= dmax) {
+          const x = ca * s - sa * off2, y = sa * s + ca * off2;
+          const n = shape.test(x, y);
+          ok = !!n && (!cond || cond(n, x, y));
+        }
+        if (ok && run === null) run = s;
+        else if (run !== null && (!ok || s - run >= maxLen)) {
+          emit(off2, run, ok ? s : s - step);
+          run = ok ? s : null;
+        }
+      }
+    }
+    return { segs, ca, sa, w };
+  }
+  function crayon(ctx, shape, o = {}) {
+    const alpha = o.alpha === undefined ? 0.5 : o.alpha;
+    const prog = o.p === undefined ? 1 : o.p;
+    if (alpha <= 0.004 || prog <= 0.001 || !shape) return;
+    const world = o.world || o.still;
+    const z = world ? 1 : PEN.z;
+    const key = o.key || 'crayon';
+    let rec = null, ck = null;
+    if (world && o.still) {
+      const lp = PEN.light || {};
+      ck = key + '|' + shape.x0.toFixed(1) + ',' + shape.y0.toFixed(1) + ',' + shape.x1.toFixed(1) + ',' + shape.y1.toFixed(1) +
+        '|' + (o.cond ? Math.round(lp.x) + ',' + Math.round(lp.y) + ',' + Math.round(lp.z) : '') + '|' + (o.sig || '') + '|' + (PEN.detail || 1);
+      rec = segCache.get(ck);
+    }
+    if (!rec) {
+      rec = buildSegs(shape, Object.assign({}, o, { still: !!o.still }), z, key);
+      if (ck) { if (segCache.size > 4000) segCache.clear(); segCache.set(ck, rec); }
+    }
+    const segs = rec.segs, ca = rec.ca, sa = rec.sa, w = rec.w;
+    const nv = Math.floor(segs.length * prog);
+    if (!nv) return;
+    const role = o.color || 'fur';
+    ctx.lineCap = 'round';
+    const groups = [[0.82, 0.75], [1, 1], [1.15, 0.85]];
+    for (let gi = 0; gi < 3; gi++) {
+      ctx.lineWidth = w * groups[gi][0];
+      ctx.strokeStyle = col(role, alpha * groups[gi][1]);
+      ctx.beginPath();
+      for (let i = 0; i < nv; i++) {
+        const sg = segs[i];
+        if (Math.floor(sg[4] * 3) !== gi) continue;
+        ctx.moveTo(sg[0], sg[1]);
+        if (sg[5]) {
+          const mx = (sg[0] + sg[2]) / 2 - sa * sg[5], my = (sg[1] + sg[3]) / 2 + ca * sg[5];
+          ctx.quadraticCurveTo(mx, my, sg[2], sg[3]);
+        } else ctx.lineTo(sg[2], sg[3]);
+      }
+      ctx.stroke();
+    }
+  }
+
+  // тон формы по сетке: считаем свет один раз, все проходы мелка берут из таблицы
+  function toneGrid(shape, l, cell) {
+    let nx = 0, I = null, NZ = null;
+    const rec = { I: 0, nz: 0 };
+    const build = () => {
+      nx = Math.max(1, Math.ceil((shape.x1 - shape.x0) / cell) + 1);
+      const ny = Math.max(1, Math.ceil((shape.y1 - shape.y0) / cell) + 1);
+      I = new Float32Array(nx * ny).fill(NaN);
+      NZ = new Float32Array(nx * ny);
+      for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+        const n = shape.test(shape.x0 + (i + 0.5) * cell, shape.y0 + (j + 0.5) * cell);
+        if (!n) continue;
+        const k = j * nx + i;
+        I[k] = n[0] * l[0] + n[1] * l[1] + n[2] * l[2];
+        NZ[k] = n[2];
+      }
+    };
+    return {
+      cx: shape.cx, cy: shape.cy, x0: shape.x0, y0: shape.y0, x1: shape.x1, y1: shape.y1,
+      test(x, y) {
+        if (!I) build();
+        const i = Math.floor((x - shape.x0) / cell), j = Math.floor((y - shape.y0) / cell);
+        if (i < 0 || j < 0 || i >= nx) return null;
+        const k = j * nx + i;
+        if (k >= I.length) return null;
+        const v = I[k];
+        if (v !== v) return null;
+        rec.I = v; rec.nz = NZ[k];
+        return rec;
+      },
+    };
+  }
+
+  // ---- объём: мелок по тону + блики + графитная штриховка в тени
+  function volume(shape, o = {}) {
+    const a = o.alpha === undefined ? 1 : o.alpha;
+    const p = o.p === undefined ? 1 : o.p;
+    if (a <= 0.004 || p <= 0.001 || !shape) return;
+    const L = PEN.L, k = o.key || 'vol', role = o.color || 'fur';
+    const l = o.light || lightAt(shape.cx, shape.cy);
+    const st = !!o.still;
+    const grid = toneGrid(shape, l, 4.5 / (st ? 1 : PEN.z));
+    const sig = st ? l[0].toFixed(2) + ',' + l[1].toFixed(2) + ',' + l[2].toFixed(2) : '';
+    const ang = o.angle === undefined ? -0.85 : o.angle;
+    const ws = o.w || 1, dens = o.dense === undefined ? 1 : o.dense;
+    const sh = o.shadowAt === undefined ? 0.3 : o.shadowAt;
+    const C = { still: st, sig, p };
+    // 1. основной цвет
+    crayon(L.color, grid, Object.assign({}, C, { key: k + ':b', color: role, alpha: 0.5 * a * dens, w: 9 * ws, gap: 6.2 * ws, angle: ang, maxLen: o.maxLen || 70 }));
+    // 2. полутень — второй слой того же мелка
+    crayon(L.color, grid, Object.assign({}, C, { key: k + ':m', color: role, alpha: 0.42 * a * dens, w: 8 * ws, gap: 6.8 * ws, angle: ang + 0.65, cond: (n) => n.I < sh + 0.32 }));
+    // 3. собственная тень — холодный тёмный мелок, у самого края остаётся рефлекс
+    crayon(L.color, grid, Object.assign({}, C, { key: k + ':s', color: role + ':sh', alpha: 0.55 * a, w: 7 * ws, gap: 5.6 * ws, angle: ang - 0.55, cond: (n) => n.I < sh && n.nz > 0.16 }));
+    // 4. графит в самой глубокой тени
+    if (!o.noCore) crayon(L.graphite, grid, Object.assign({}, C, { key: k + ':g', color: 'line', alpha: 0.32 * a, w: 1.5, gap: 4.2, angle: ang + 1.15, maxLen: 42, bow: 0.1, cond: (n) => n.I < sh - 0.16 && n.nz > 0.28 }));
+    // 5. блик белым мелком
+    if (!o.noLight) crayon(L.light, grid, Object.assign({}, C, { key: k + ':h', color: 'light', alpha: 0.85 * a * (o.shine === undefined ? 1 : o.shine), w: 6 * ws, gap: 6.5 * ws, angle: ang + 0.25, maxLen: 30, cond: (n) => n.I > (o.lightAt || 0.86) }));
+  }
+
+  // ---- падающая тень на пол: эллипс, отодвинутый от света
+  function castShadow(x, y, rx, ry, o = {}) {
+    const a = o.alpha === undefined ? 1 : o.alpha;
+    if (a <= 0.004) return;
+    const l = lightAt(x, y - (o.h || 150));
+    const k = o.key || 'cast';
+    const dx = -l[0] / Math.max(0.25, l[2]) * rx * 0.35;
+    const shp = ellShape(x + clamp(dx, -rx * 0.9, rx * 0.9), y + ry * 0.1, rx * 1.1, ry, 0, 1);
+    crayon(PEN.L.color, shp, { key: k + ':1', color: 'shadow', alpha: 0.3 * a, w: 10, gap: 6, angle: -0.12, cond: (n) => n[2] > 0.3, maxLen: 60, still: o.still });
+    crayon(PEN.L.color, shp, { key: k + ':2', color: 'shadow', alpha: 0.32 * a, w: 8, gap: 6, angle: 0.3, cond: (n) => n[2] > 0.72, still: o.still });
+    crayon(PEN.L.graphite, shp, { key: k + ':3', color: 'line', alpha: 0.2 * a, w: 1.3, gap: 4, angle: 0.75, cond: (n) => n[2] > 0.8, still: o.still });
   }
 
   const PEN = {
@@ -627,6 +957,7 @@
     xf, ellipsePts, ellipsePoly, arcPts, curve, polyLen, resample, ik,
     stroke, guide, hatch, blob, write, textWidth, FONT,
     begin, camera, screen, compose, makeCanvas,
+    lightAt, ellShape, polyShape, rectShape, capsuleShape, crayon, volume, castShadow,
   };
   global.PEN = PEN;
 })(typeof window !== 'undefined' ? window : globalThis);

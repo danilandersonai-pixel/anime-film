@@ -47,11 +47,39 @@
     $('playIcon').setAttribute('d', playing ? ICON_PAUSE : ended ? ICON_REPLAY : ICON_PLAY);
     $('play').setAttribute('aria-label', playing ? 'Пауза' : ended ? 'Смотреть заново' : 'Смотреть');
   }
+  // внутреннее разрешение: по размеру сцены на экране, а если кадр не успевает за 1/12 с — ниже
+  // [разрешение, детализация мелка]: первые три ступени — по размеру экрана, дальше — если не успеваем
+  const QUALITY = [1, 0.8, 0.667, 0.667, 0.5];
+  const DETAIL = [1, 1, 1, 1.35, 1.7];
+  let qi = 0, slow = 0, timed = 0;
+  function setQuality(i) {
+    qi = Math.max(0, Math.min(QUALITY.length - 1, i));
+    P.detail = DETAIL[qi];
+    canvas.width = Math.round(1920 * QUALITY[qi]);
+    canvas.height = Math.round(1080 * QUALITY[qi]);
+    lastFrame = -1;
+  }
+  function fitQuality() {
+    const px = canvas.getBoundingClientRect().width * (window.devicePixelRatio || 1);
+    let i = 0;
+    while (i < 2 && 1920 * QUALITY[i + 1] >= px) i++;
+    setQuality(i);
+  }
   function draw(force) {
     const f = Math.floor(t * P.DRAW_FPS + 1e-6);
     if (!force && f === lastFrame) return;
     lastFrame = f;
+    const t0 = performance.now();
     S.renderFrame(ctx, t);
+    if (playing) {
+      const ms = performance.now() - t0;
+      timed++;
+      if (ms > 78) slow++;
+      if (timed >= 8) {
+        if (slow >= 4 && qi < QUALITY.length - 1) setQuality(qi + 1);
+        timed = 0; slow = 0;
+      }
+    }
   }
   function now() {
     if (usingAudio) { const a = SND.time(); if (a !== null) return a; }
@@ -136,6 +164,7 @@
   window.__film = {
     END,
     render(x) { t = x; started = true; lastFrame = -1; S.renderFrame(ctx, x); return true; },
+    quality(rs) { const i = QUALITY.indexOf(rs); setQuality(i < 0 ? 0 : i); return canvas.width; },
     setTheme,
   };
 
@@ -148,6 +177,7 @@
     let saved = null;
     try { saved = localStorage.getItem('mishka-theme'); } catch (e) { /* хранилище недоступно */ }
     const fromHash = (location.hash || '').slice(1);
+    fitQuality();
     setTheme(P.THEMES[fromHash] ? fromHash : (saved && P.THEMES[saved] ? saved : S.THEME));
     draw(true);
     ui();

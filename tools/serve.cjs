@@ -36,6 +36,7 @@ async function openFilm(theme) {
   await page.route(/fonts\.(googleapis|gstatic)\.com/, (r) => r.abort());
   await page.goto(`http://127.0.0.1:${port}/index.html${theme ? '#' + theme : ''}`);
   await page.waitForFunction(() => window.__filmReady === true, null, { timeout: 20000 });
+  await page.evaluate(() => window.__film.quality(1)); // для проверки и MP4 — всегда полное разрешение
   return { browser, page, srv, errors };
 }
 

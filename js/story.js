@@ -55,13 +55,13 @@
   // Семья
   // ---------------------------------------------------------------------
   const SPEC = {
-    anya: { hairKid: 'pigtails', hairAdult: 'bun', hairColor: 'line', hairAlpha: 0.55, dress: 'a1', pattern: 'dots', hk: 1.0 },
-    anya52: { hairKid: 'bun', hairAdult: 'bun', hairColor: 'soft', hairAlpha: 0.42, dress: 'a1', pattern: 'cardigan', glasses: true, long: true, hk: 1.0 },
-    anya75: { hairKid: 'bun', hairAdult: 'bun', hairColor: 'soft', hairAlpha: 0.16, dress: 'a1', pattern: 'cardigan', glasses: true, long: true, old: true },
-    lena: { hairKid: 'bob', hairAdult: 'bob', hairColor: 'soft', hairAlpha: 0.6, dress: 'a2', pattern: 'stripes', hk: 1.035 },
-    lena51: { hairKid: 'bob', hairAdult: 'bob', hairColor: 'soft', hairAlpha: 0.35, dress: 'a2', pattern: 'cardigan', long: true, hk: 1.035 },
-    katya: { hairKid: 'ponytail', hairAdult: 'ponytail', hairColor: 'fur', hairAlpha: 0.7, dress: 'fur', pattern: 'zigzag', hk: 0.975 },
-    sonia: { hairKid: 'sprout', hairAdult: 'sprout', hairColor: 'fur', hairAlpha: 0.5, dress: 'warm', pattern: 'collar' },
+    anya: { hairKid: 'pigtails', hairAdult: 'bun', hairColor: 'hairDark', dress: 'a1', pattern: 'dots', hk: 1.0 },
+    anya52: { hairKid: 'bun', hairAdult: 'bun', hairColor: 'hairBrown', dress: 'a1', pattern: 'cardigan', glasses: true, long: true, hk: 1.0 },
+    anya75: { hairKid: 'bun', hairAdult: 'bun', hairColor: 'hairGray', dress: 'a1', pattern: 'cardigan', glasses: true, long: true, old: true },
+    lena: { hairKid: 'bob', hairAdult: 'bob', hairColor: 'hairBrown', dress: 'a2', pattern: 'stripes', hk: 1.035 },
+    lena51: { hairKid: 'bob', hairAdult: 'bob', hairColor: 'hairBrown', dress: 'a2', pattern: 'cardigan', long: true, hk: 1.035 },
+    katya: { hairKid: 'ponytail', hairAdult: 'ponytail', hairColor: 'hairGinger', dress: 'fur', pattern: 'zigzag', hk: 0.975 },
+    sonia: { hairKid: 'sprout', hairAdult: 'sprout', hairColor: 'hairFair', dress: 'warm', pattern: 'collar' },
   };
   // отметки роста на косяке: у каждого поколения свой карандаш
   const GENS = {
@@ -100,6 +100,9 @@
   // «стираем» то, что нарисовано позади объекта (объект не прозрачный)
   function knock(ctx, polys, a) {
     if (a <= 0.004) return;
+    for (const c of P.layers) knockOne(c, polys, a);
+  }
+  function knockOne(ctx, polys, a) {
     ctx.save();
     ctx.globalCompositeOperation = 'destination-out';
     ctx.fillStyle = `rgba(0,0,0,${clamp(a)})`;
@@ -193,9 +196,32 @@
     return out;
   }
   function drawHeart(ctx, cx, cy, size, key, al, p = 1, rot = 0.3) {
+    if (al <= 0.004 || p <= 0) return;
     const pts = heartPts(cx, cy, size, rot);
-    hatch(ctx, pts, { key: key + ':h', color: 'warm', alpha: 0.75 * al * p, gap: 2.8, w: 1.6, jitter: 1.5, angle: -0.6 });
-    stroke(ctx, pts, { key: key + ':o', closed: true, color: 'warm', w: 2.2, alpha: al, p, amp: 0.6, gaps: false });
+    P.volume(P.polyShape(pts, { round: 0.85, vy: (f) => lerp(-0.5, 0.4, f) }), { key: key + ':v', color: 'warm', alpha: al * p, w: 0.45, shine: 1.2 });
+    stroke(ctx, pts, { key: key + ':o', closed: true, color: 'warm:dk', w: 2, alpha: al, p, amp: 0.6, gaps: false });
+  }
+
+  // пушистый край: короткие штрихи мелка наружу
+  function tufts(cx, cy, rx, ry, rot, key, al, role = 'fur:sh') {
+    if (al <= 0.004) return;
+    const z = P.z, ctx = P.L.color, r = P.boilRng(key);
+    const N = Math.max(8, Math.round((rx + ry) * 1.7 * z / 10));
+    const c = Math.cos(rot), s = Math.sin(rot);
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 2.6 / z;
+    ctx.strokeStyle = P.col(role, 0.6 * al);
+    ctx.beginPath();
+    for (let i = 0; i < N; i++) {
+      const a = (i / N) * Math.PI * 2 + r() * 0.25;
+      const ex = Math.cos(a) * rx, ey = Math.sin(a) * ry;
+      const px = cx + ex * c - ey * s, py = cy + ex * s + ey * c;
+      const nx = Math.cos(a) * c - Math.sin(a) * s, ny = Math.cos(a) * s + Math.sin(a) * c;
+      const len = (4 + r() * 6) / z, tw = (r() - 0.5) * 0.8;
+      ctx.moveTo(px - nx * len * 0.6, py - ny * len * 0.6);
+      ctx.lineTo(px + (nx * Math.cos(tw) - ny * Math.sin(tw)) * len, py + (nx * Math.sin(tw) + ny * Math.cos(tw)) * len);
+    }
+    ctx.stroke();
   }
 
   function drawBear(ctx, o) {
@@ -204,8 +230,9 @@
     const M = bearM(o), k = o.key || 'bear', d = o.draw === undefined ? 1 : o.draw;
     const fur = o.fur === undefined ? 1 : o.fur;
     const m = o.marks || {};
-    const w = o.w || 2.8;
+    const w = o.w || 2.6;
     const pp = (a, b) => seg(d, a, b);
+    const L = P.L;
     // строительные линии
     const build = o.build === undefined ? (1 - seg(d, 0.6, 1)) * clamp(d * 6) : o.build;
     if (build > 0.01) {
@@ -216,49 +243,53 @@
       guide(ctx, [M(-70, -172), M(70, -172)], { key: k + ':g4', alpha: build * al * 0.7 });
       guide(ctx, [M(-90, 0), M(90, 0)], { key: k + ':g5', alpha: build * al * 0.7 });
     }
+    // тень на полу
+    if (o.ground !== undefined) P.castShadow(M(0, 0)[0], o.ground, 80 * M.s, 15 * M.s, { key: k + ':cast', alpha: al * clamp(d * 2) * fur * (o.shadowA === undefined ? 1 : o.shadowA), h: 110 * M.s });
+    const shp = (name, sc = 0.98, flat = 1) => { const e = bearPart(M, BG[name]); return P.ellShape(e.c[0], e.c[1], e.rx * sc, e.ry * sc, e.rot, flat); };
     const outline = (name, p, extra = {}) => {
       const e = bearPart(M, BG[name]);
       stroke(ctx, ellipsePts(e.c[0], e.c[1], e.rx, e.ry, e.rot, k + name), Object.assign({ key: k + ':' + name, closed: true, w, p, alpha: al }, extra));
       return e;
     };
     const polyOf = (name, sc = 1) => { const e = bearPart(M, BG[name]); return ellipsePoly(e.c[0], e.c[1], e.rx * sc, e.ry * sc, e.rot, 30); };
-    const furH = (name, holes, p, ang = -0.9, salt = '') => {
-      if (p <= 0) return;
-      const rings = [polyOf(name, 0.97)].concat(holes.map((h) => polyOf(h, 1)));
-      hatch(ctx, rings, { key: k + ':fur:' + name + salt, color: 'fur', alpha: 0.5 * al, p, gap: 6.5, w: 1.5, angle: ang, jitter: 4 });
-    };
-    const shade = (name, p, dx = -0.18, dy = -0.12) => {
-      if (p <= 0) return;
-      const e = bearPart(M, BG[name]);
-      const inner = ellipsePoly(e.c[0] + dx * e.rx, e.c[1] + dy * e.ry, e.rx * 0.8, e.ry * 0.8, e.rot, 30);
-      hatch(ctx, [ellipsePoly(e.c[0], e.c[1], e.rx * 0.98, e.ry * 0.98, e.rot, 30), inner],
-        { key: k + ':sh:' + name, color: 'soft', alpha: 0.42 * al, p, gap: 5, w: 1.3, angle: 0.75, jitter: 3 });
-    };
     const kn = (name, p) => knock(ctx, [polyOf(name, 1.03)], al * clamp(p * 4));
+    const vol = (name, role, p, extra = {}) => P.volume(shp(name, 0.99, extra.flat || 1), Object.assign({ key: k + ':v:' + name, color: role, alpha: al, p: p * fur }, extra));
+    const fluff = (name, p) => { const e = bearPart(M, BG[name]); tufts(e.c[0], e.c[1], e.rx, e.ry, e.rot, k + ':tf:' + name, al * p * fur); };
 
     // уши (за головой)
     const pE = pp(0.12, 0.3);
     for (const s of ['L', 'R']) {
+      vol('ear' + s, 'fur', pE, { w: 0.6 });
+      vol('earIn' + s, 'cream:sh', pE, { w: 0.4, noCore: true, noLight: true });
+      fluff('ear' + s, pE);
       outline('ear' + s, pE);
       outline('earIn' + s, pE, { w: w * 0.7 });
-      furH('ear' + s, ['earIn' + s], fur * pE);
     }
     // туловище
     const pB = pp(0.38, 0.6);
     kn('body', pB);
+    vol('body', 'fur', pB);
+    // тень от головы на груди
+    const hd = bearPart(M, BG.head);
+    const hs = P.ellShape(hd.c[0] + 4 * M.s, hd.c[1] + 30 * M.s, hd.rx * 0.92, hd.ry * 0.72);
+    P.crayon(L.color, shp('body'), { key: k + ':hsh', color: 'fur:sh', alpha: 0.5 * al * pB * fur, w: 7, gap: 5.5, angle: -0.3, cond: (n, x, y) => hs.test(x, y) !== null });
+    fluff('body', pB);
     outline('body', pB);
+    knock(ctx, [polyOf('belly', 0.98)], al * clamp(pp(0.52, 0.64) * 3) * fur);
+    vol('belly', 'cream', pp(0.52, 0.64), { w: 0.75, flat: 0.7, shadowAt: 0.22 });
     outline('belly', pp(0.52, 0.64), { w: w * 0.7 });
-    furH('body', ['belly'], fur * pB);
-    shade('body', fur * pB);
     // лапы (ноги)
     const pL = pp(0.72, 0.92);
     for (const s of ['L', 'R']) {
       kn('leg' + s, pL);
+      vol('leg' + s, 'fur', pL, { w: 0.75 });
+      fluff('leg' + s, pL);
       outline('leg' + s, pL);
-      outline('pad' + s, pp(0.86, 1), { w: w * 0.7 });
-      furH('leg' + s, ['pad' + s], fur * pL, -0.9, s);
+      const pPad = pp(0.86, 1);
+      knock(ctx, [polyOf('pad' + s, 1)], al * pPad * fur);
+      vol('pad' + s, 'cream', pPad, { w: 0.45, flat: 0.6, noCore: true });
+      outline('pad' + s, pPad, { w: w * 0.7 });
     }
-    shade('legR', fur * pL, -0.1, -0.3);
     // заплатка (Лена, 1979)
     if (m.patch > 0) {
       const pc = M(PATCH[0], PATCH[1]), r = M.rot - 0.25, hw = 15 * M.s, hh = 13 * M.s;
@@ -266,10 +297,13 @@
       const q = [[-hw, -hh], [hw, -hh * 0.9], [hw * 1.05, hh], [-hw * 0.95, hh * 1.05]].map(([x, y]) => [pc[0] + x * c - y * s, pc[1] + x * s + y * c]);
       const pO = seg(m.patch, 0, 0.45), pH = seg(m.patch, 0.3, 0.7), pS = seg(m.patch, 0.6, 1);
       knock(ctx, [q], al * clamp(pO * 3));
-      hatch(ctx, q, { key: k + ':patchH', color: 'a2', alpha: 0.65 * al, p: pH, gap: 3.5, w: 1.4, angle: 0.2, jitter: 1.5 });
-      hatch(ctx, q, { key: k + ':patchH2', color: 'a2', alpha: 0.45 * al, p: pH, gap: 4.5, w: 1.3, angle: -1.3, jitter: 1.5 });
-      stroke(ctx, q, { key: k + ':patch', closed: true, color: 'a2', w: 2.4, alpha: al, p: pO, amp: 0.8 });
-      // стежки
+      P.volume(P.polyShape(q, { round: 0.55 }), { key: k + ':patchV', color: 'a2', alpha: al, p: pH, w: 0.45 });
+      // клетка на ткани
+      for (let i = 1; i < 3; i++) {
+        stroke(ctx, [lerp2(q[0], q[1], i / 3), lerp2(q[3], q[2], i / 3)], { key: k + ':pc' + i, color: 'a2:dk', w: 1.4, alpha: al * pH, sketch: false, gaps: false });
+        stroke(ctx, [lerp2(q[0], q[3], i / 3), lerp2(q[1], q[2], i / 3)], { key: k + ':pr' + i, color: 'a2:dk', w: 1.4, alpha: al * pH, sketch: false, gaps: false });
+      }
+      stroke(ctx, q, { key: k + ':patch', closed: true, color: 'a2:dk', w: 2.4, alpha: al, p: pO, amp: 0.8 });
       const ns = 12;
       for (let i = 0; i < ns; i++) {
         if (i / ns > pS) break;
@@ -284,27 +318,30 @@
     const pA = pp(0.58, 0.78);
     for (const s of ['L', 'R']) {
       kn('arm' + s, pA);
+      vol('arm' + s, 'fur', pA, { w: 0.7 });
+      fluff('arm' + s, pA);
       outline('arm' + s, pA);
-      furH('arm' + s, [], fur * pA, -0.9, s);
     }
-    shade('armR', fur * pA, -0.3, -0.1);
     // голова
     const pHd = pp(0, 0.22);
     kn('head', pHd);
+    vol('head', 'fur', pHd);
+    fluff('head', pHd);
     outline('head', pHd);
-    furH('head', ['muzzle'], fur * pHd);
-    shade('head', fur * pHd, -0.2, -0.2);
     // мордочка
     const pM = pp(0.22, 0.36);
+    knock(ctx, [polyOf('muzzle', 1)], al * clamp(pM * 3) * fur);
+    vol('muzzle', 'cream', pM, { w: 0.55, flat: 0.8, noCore: true });
     outline('muzzle', pM, { w: w * 0.8 });
     const pF = pp(0.3, 0.42);
+    const shine = (c, r) => { const lc = P.L.light; lc.fillStyle = P.col('light', 0.9 * al); lc.beginPath(); lc.arc(c[0] - r * 0.35, c[1] - r * 0.38, Math.max(1.2 / P.z, r * 0.3), 0, 6.283); lc.fill(); };
     if (pF > 0) {
       const n = bearPart(M, BG.nose);
       blob(ctx, n.c[0], n.c[1], n.rx, n.ry, { key: k + ':nose', alpha: al * clamp(pF * 2) });
+      shine(n.c, n.rx * 0.8);
       stroke(ctx, curve([M(0, -147), M(0, -141), M(-8, -135)], false, 5), { key: k + ':m1', w: w * 0.75, alpha: al, p: pF, sketch: false });
       stroke(ctx, curve([M(0, -141), M(8, -135)], false, 4), { key: k + ':m2', w: w * 0.75, alpha: al, p: pF, sketch: false });
-      // шов на голове
-      for (let i = 0; i < 3; i++) stroke(ctx, [M(-3, -206 + i * 7), M(3, -204 + i * 7)], { key: k + ':seam' + i, w: 1.3, alpha: al * 0.6 * pF, sketch: false, gaps: false });
+      for (let i = 0; i < 3; i++) stroke(ctx, [M(-3, -206 + i * 7), M(3, -204 + i * 7)], { key: k + ':seam' + i, w: 1.3, alpha: al * 0.6 * pF, sketch: false });
     }
     // глаза-пуговицы
     const pEy = pp(0.34, 0.46);
@@ -322,19 +359,21 @@
       const eR = eyeAt('R');
       blob(ctx, eR[0], eR[1], er, er * 1.05, { key: k + ':eyeR', alpha: al * pEy });
       holes(eR, er * 0.38, 2);
+      shine(eR, er);
       const eL = eyeAt('L');
       const oldA = 1 - seg(btn, 0, 0.4);
-      if (oldA > 0) { blob(ctx, eL[0], eL[1], er, er * 1.05, { key: k + ':eyeL', alpha: al * pEy * oldA }); holes(eL, er * 0.38, 2); }
+      if (oldA > 0) { blob(ctx, eL[0], eL[1], er, er * 1.05, { key: k + ':eyeL', alpha: al * pEy * oldA }); holes(eL, er * 0.38, 2); shine(eL, er); }
       const nb = seg(btn, 0.3, 1);
       if (nb > 0) { // синяя пуговица (Аня, 1962)
         const br = 9.5 * M.s, poly = ellipsePoly(eL[0], eL[1], br, br, 0, 24);
         knock(ctx, [poly], al * nb);
-        hatch(ctx, poly, { key: k + ':btnH', color: 'a1', alpha: 0.8 * al * nb, gap: 2.4, w: 1.5, angle: -0.7, jitter: 1.2 });
-        stroke(ctx, ellipsePts(eL[0], eL[1], br, br, 0, k + 'btn'), { key: k + ':btn', closed: true, color: 'a1', w: 2.2, alpha: al, p: nb, amp: 0.5 });
+        P.volume(P.ellShape(eL[0], eL[1], br, br, 0, 0.6), { key: k + ':btnV', color: 'a1', alpha: al * nb, w: 0.35, shine: 1.3, noCore: true });
+        stroke(ctx, ellipsePts(eL[0], eL[1], br, br, 0, k + 'btn'), { key: k + ':btn', closed: true, color: 'a1:dk', w: 2.2, alpha: al, p: nb, amp: 0.5 });
         if (nb > 0.7) {
           holes(eL, br * 0.36, 4);
           stroke(ctx, [[eL[0] - br * 0.36, eL[1] - br * 0.36], [eL[0] + br * 0.36, eL[1] + br * 0.36]], { key: k + ':thr1', w: 1.2, alpha: al * 0.8, sketch: false, gaps: false });
           stroke(ctx, [[eL[0] + br * 0.36, eL[1] - br * 0.36], [eL[0] - br * 0.36, eL[1] + br * 0.36]], { key: k + ':thr2', w: 1.2, alpha: al * 0.8, sketch: false, gaps: false });
+          shine(eL, br);
         }
       }
     }
@@ -344,16 +383,16 @@
       const pBand = seg(m.scarf, 0, 0.45), pTail = seg(m.scarf, 0.35, 0.7), pFill = seg(m.scarf, 0.5, 1);
       knock(ctx, [g.band], al * clamp(pBand * 3));
       if (pTail > 0) knock(ctx, [g.tail], al * clamp(pTail * 3));
-      hatch(ctx, g.band, { key: k + ':scH', color: 'a2', alpha: 0.6 * al, p: pFill, gap: 4, w: 1.5, angle: 1.2, jitter: 2 });
-      hatch(ctx, g.tail, { key: k + ':scT', color: 'a2', alpha: 0.6 * al, p: pFill, gap: 4, w: 1.5, angle: 0.3, jitter: 2 });
-      stroke(ctx, g.band, { key: k + ':scB', closed: true, color: 'line', w: 2.4, alpha: al, p: pBand });
-      stroke(ctx, g.tail, { key: k + ':scTl', closed: true, color: 'line', w: 2.4, alpha: al, p: pTail });
-      // полоски
+      P.volume(P.polyShape(g.band, { round: 0.95, vy: (f) => lerp(-0.6, 0.5, f) }), { key: k + ':scV', color: 'a2', alpha: al, p: pFill, w: 0.55 });
+      P.volume(P.polyShape(g.tail, { round: 0.8 }), { key: k + ':scVt', color: 'a2', alpha: al, p: pFill, w: 0.5 });
+      // тень шарфа на груди
       const stripes = [[-40, -112, -38, -128], [-18, -105, -17, -121], [6, -103, 6, -119], [28, -108, 27, -123], [48, -118, 46, -133], [16, -96, 33, -98], [19, -80, 37, -82]];
       stripes.forEach((s, i) => {
         if (pFill <= i / stripes.length) return;
-        stroke(ctx, [M(s[0], s[1]), M(s[2], s[3])], { key: k + ':scS' + i, color: 'a1', w: 4.2, alpha: al * 0.85, sketch: false, amp: 0.6 });
+        stroke(P.L.color, [M(s[0], s[1]), M(s[2], s[3])], { key: k + ':scS' + i, color: 'a1', w: 5, alpha: al * 0.8, sketch: false, amp: 0.6 });
       });
+      stroke(ctx, g.band, { key: k + ':scB', closed: true, color: 'line', w: 2.4, alpha: al, p: pBand });
+      stroke(ctx, g.tail, { key: k + ':scTl', closed: true, color: 'line', w: 2.4, alpha: al, p: pTail });
       g.fr.forEach((f, i) => stroke(ctx, f, { key: k + ':fr' + i, w: 1.6, alpha: al * pFill, sketch: false, gaps: false }));
     }
     // заколка-сердечко (Соня, 2026)
@@ -429,7 +468,7 @@
       const lift = ph === undefined || ph === null ? 0 : Math.max(0, Math.sin(ph) * s) * R * 0.22;
       const top = low(s * legX, hemY - R * 0.1);
       const foot = [X + s * legX + sw2, G - lift];
-      return { top, foot, poly: limbPoly([top, foot], lw, lw * 0.9), shoe: [foot[0] + f * R * 0.1, foot[1] - R * 0.08], sr: [R * 0.3, R * 0.16] };
+      return { top, foot, w: lw, poly: limbPoly([top, foot], lw, lw * 0.9), shoe: [foot[0] + f * R * 0.1, foot[1] - R * 0.08], sr: [R * 0.3, R * 0.16] };
     });
     // руки (обратная кинематика к целям-кистям)
     const ua = Hp * lerp(0.15, 0.172, a), fa = Hp * lerp(0.135, 0.158, a);
@@ -447,7 +486,7 @@
       const sd = side === 'l' ? -1 : 1;
       const k = mode === 'out' ? ((k1.e[0] - X) * sd > (k2.e[0] - X) * sd ? k1 : k2) : (k1.e[1] > k2.e[1] ? k1 : k2);
       const pts = curve([S, k.e, k.h], false, 6);
-      return { side, S, E: k.e, Hn: k.h, pts, poly: limbPoly(pts, aw, aw * 0.85), hr: R * 0.2 };
+      return { side, S, E: k.e, Hn: k.h, pts, w: aw, poly: limbPoly(pts, aw, aw * 0.85), hr: R * 0.2 };
     });
     // куда кладём мишку: обнимает / протягивает / держит над головой
     g.hugC = up(f * R * 0.08, shY + R * lerp(1.95, 2.35, a));
@@ -480,15 +519,21 @@
     bob: [[-1.04, 0.76], [-1.13, 0.1], [-1.02, -0.6], [-0.6, -1.06], [0, -1.17], [0.6, -1.06], [1.02, -0.6], [1.13, 0.1], [1.04, 0.76],
       [0.84, 0.8], [0.88, 0.0], [0.76, -0.33], [0.4, -0.36], [0, -0.34], [-0.4, -0.36], [-0.76, -0.33], [-0.88, 0.0], [-0.84, 0.8]],
   };
+  // пряди: от макушки к краю причёски
+  const STRANDS = {
+    cap: [[0, -1.1, -0.55, -0.62], [0, -1.1, -0.95, -0.2], [0, -1.1, 0.55, -0.62], [0, -1.1, 0.95, -0.2]],
+    capHigh: [[0, -1.12, -0.5, -0.7], [0, -1.12, -0.95, -0.25], [0, -1.12, 0.5, -0.7], [0, -1.12, 0.95, -0.25]],
+    bob: [[0, -1.12, -0.6, -0.4], [0, -1.12, -1.0, 0.5], [0, -1.12, 0.6, -0.4], [0, -1.12, 1.0, 0.5], [-0.3, -1.05, -0.95, 0.7], [0.3, -1.05, 0.95, 0.7]],
+  };
 
-  function drawHair(ctx, style, g, k, al, p, role, hA, extraAlpha = 1) {
-    if (al * extraAlpha <= 0.004) return;
+  function drawHair(ctx, style, g, k, al, p, role, extraAlpha = 1) {
+    const A = al * extraAlpha;
+    if (A <= 0.004) return;
     const R = g.R, hc = g.head;
     const c = Math.cos(g.lean), s = Math.sin(g.lean);
     const H2 = (x, y) => [hc[0] + (x * c - y * s) * R, hc[1] + (x * s + y * c) * R];
-    const A = al * extraAlpha;
-    const mainPts = (style === 'bob' ? HAIR.bob : style === 'bun' ? HAIR.capHigh : HAIR.cap).map(([x, y]) => H2(x, y));
-    const poly = curve(mainPts, true, 4);
+    const key = style === 'bob' ? 'bob' : style === 'bun' ? 'capHigh' : 'cap';
+    const poly = curve(HAIR[key].map(([x, y]) => H2(x, y)), true, 4);
     const extras = [];
     if (style === 'pigtails') {
       for (const sd of [-1, 1]) extras.push({ e: [sd * 1.3, 0.78, 0.24, 0.5, sd * -0.35], tie: [sd * 1.06, 0.2] });
@@ -497,25 +542,38 @@
     } else if (style === 'bun') {
       extras.push({ e: [0, -1.24, 0.42, 0.33, 0], tie: null });
     }
-    const exPolys = extras.map((ex) => { const cc = H2(ex.e[0], ex.e[1]); return ellipsePoly(cc[0], cc[1], ex.e[2] * R, ex.e[3] * R, ex.e[4] + g.lean, 24); });
-    knock(ctx, [poly].concat(exPolys), A * clamp(p * 3));
-    hatch(ctx, poly, { key: k + ':hairH:' + style, color: role, alpha: hA * A, p, gap: 4.2, w: 1.5, angle: -1.15, jitter: 3 });
+    const exGeo = extras.map((ex) => { const cc = H2(ex.e[0], ex.e[1]); return { cc, rx: ex.e[2] * R, ry: ex.e[3] * R, rot: ex.e[4] + g.lean }; });
+    // хвостики и пучок — за головой
+    exGeo.forEach((eg, i) => {
+      const poly2 = ellipsePoly(eg.cc[0], eg.cc[1], eg.rx, eg.ry, eg.rot, 24);
+      knock(ctx, [poly2], A * clamp(p * 3));
+      P.volume(P.ellShape(eg.cc[0], eg.cc[1], eg.rx, eg.ry, eg.rot), { key: k + ':hxV' + i + style, color: role, alpha: A, p, w: 0.45, shine: 0.8 });
+      stroke(ctx, ellipsePts(eg.cc[0], eg.cc[1], eg.rx, eg.ry, eg.rot, k + 'hx' + i), { key: k + ':hx' + i + style, closed: true, w: 2.2, alpha: A, p });
+      stroke(ctx, [[eg.cc[0], eg.cc[1] - eg.ry * 0.7], [eg.cc[0] + Math.sin(eg.rot) * eg.ry * 0.5, eg.cc[1] + eg.ry * 0.6]], { key: k + ':hxs' + i, w: 1.3, alpha: A * 0.6 * p, sketch: false });
+    });
+    knock(ctx, [poly], A * clamp(p * 3));
+    P.volume(P.polyShape(poly, { round: 0.95, vy: (f) => lerp(-0.75, 0.35, f) }), { key: k + ':hairV:' + style, color: role, alpha: A, p, w: 0.6, shine: 0.9, lightAt: 0.8 });
+    (STRANDS[key] || []).forEach(([x0, y0, x1, y1], i) => {
+      const a = H2(x0, y0), b = H2(x1, y1), m = H2((x0 + x1) / 2 + (x1 - x0) * 0.15, (y0 + y1) / 2 - 0.12);
+      stroke(ctx, curve([a, m, b], false, 6), { key: k + ':str' + i + style, w: 1.3, alpha: A * 0.55 * p, sketch: false });
+    });
     stroke(ctx, poly, { key: k + ':hair:' + style, closed: true, w: 2.4, alpha: A, p });
-    extras.forEach((ex, i) => {
-      const cc = H2(ex.e[0], ex.e[1]);
-      hatch(ctx, exPolys[i], { key: k + ':hxH' + i + style, color: role, alpha: hA * A, p, gap: 4, w: 1.5, angle: -0.6, jitter: 3 });
-      stroke(ctx, ellipsePts(cc[0], cc[1], ex.e[2] * R, ex.e[3] * R, ex.e[4] + g.lean, k + 'hx' + i), { key: k + ':hx' + i + style, closed: true, w: 2.2, alpha: A, p });
-      if (ex.tie) {
-        const t2 = H2(ex.tie[0], ex.tie[1]);
-        blob(ctx, t2[0], t2[1], R * 0.1, R * 0.1, { key: k + ':tie' + i, color: style === 'pigtails' ? 'a1' : 'line', alpha: A * p });
-        if (style === 'pigtails') { // бантики
-          for (const d of [-1, 1]) stroke(ctx, [t2, [t2[0] + d * R * 0.28, t2[1] - R * 0.18], [t2[0] + d * R * 0.26, t2[1] + R * 0.16], t2], { key: k + ':bow' + i + d, color: 'a1', w: 2, alpha: A * p, sketch: false });
+    exGeo.forEach((eg, i) => {
+      const ex = extras[i];
+      if (!ex.tie) return;
+      const t2 = H2(ex.tie[0], ex.tie[1]);
+      blob(ctx, t2[0], t2[1], R * 0.1, R * 0.1, { key: k + ':tie' + i, color: style === 'pigtails' ? 'a1' : 'line', alpha: A * p });
+      if (style === 'pigtails') { // бантики
+        for (const d of [-1, 1]) {
+          const bow = [t2, [t2[0] + d * R * 0.3, t2[1] - R * 0.2], [t2[0] + d * R * 0.28, t2[1] + R * 0.18]];
+          P.volume(P.polyShape(bow, { round: 0.7 }), { key: k + ':bowV' + i + d, color: 'a1', alpha: A * p, w: 0.3, noCore: true });
+          stroke(ctx, bow.concat([t2]), { key: k + ':bow' + i + d, color: 'a1:dk', w: 1.8, alpha: A * p, sketch: false });
         }
       }
     });
-    if (style === 'sprout') { // «пальма» на макушке и заколка
+    if (style === 'sprout') { // «пальма» на макушке
       const base = H2(0, -1.1);
-      [[-0.32, -1.5], [0, -1.62], [0.3, -1.5]].forEach(([x, y], i) => stroke(ctx, curve([base, H2(x * 0.5, y + 0.12), H2(x, y)], false, 6), { key: k + ':spr' + i, w: 2.2, alpha: A * p }));
+      [[-0.32, -1.5], [0, -1.62], [0.3, -1.5]].forEach(([x, y], i) => stroke(ctx, curve([base, H2(x * 0.5, y + 0.12), H2(x, y)], false, 6), { key: k + ':spr' + i, w: 2.4, color: role + ':dk', alpha: A * p }));
       blob(ctx, base[0], base[1], R * 0.09, R * 0.08, { key: k + ':sprT', alpha: A * p });
     }
   }
@@ -529,6 +587,7 @@
     const pp = (a, b) => seg(d, a, b);
     const R = g.R;
     const kAl = al * clamp(d * 2.5);
+    const vol = (shape, role, name, p, extra = {}) => P.volume(shape, Object.assign({ key: k + ':v:' + name, color: role, alpha: al, p }, extra));
     if (layer === 'all' || layer === 'body') {
       // строительные линии
       const build = (1 - seg(d, 0.55, 1)) * clamp(d * 6);
@@ -538,31 +597,39 @@
         guide(ctx, [g.up(-g.sw * 1.2, g.shY), g.up(g.sw * 1.2, g.shY)], { key: k + ':gs', alpha: build * al * 0.8 });
         guide(ctx, [g.low(-g.sw * 1.3, g.hemY), g.low(g.sw * 1.3, g.hemY)], { key: k + ':gm', alpha: build * al * 0.6 });
       }
+      // падающая тень на пол
+      if (st.shadow !== false) P.castShadow(g.X, GROUND, g.sw * 1.45, R * 0.34, { key: k + ':cast', alpha: kAl * 0.9, h: g.Hp * 0.55 });
       // ноги и туфли
       const pLeg = pp(0.6, 0.8);
       g.legs.forEach((lg, i) => {
         knock(ctx, [lg.poly], kAl * clamp(pLeg * 3));
+        vol(P.capsuleShape([lg.top, lg.foot], lg.w, lg.w * 0.9), spec.legs || 'skin', 'leg' + i, pLeg, { w: 0.42, noCore: true, shine: 0.6 });
         stroke(ctx, lg.poly, { key: k + ':leg' + i, closed: true, w: 2.2, alpha: al, p: pLeg });
         const sp = ellipsePoly(lg.shoe[0], lg.shoe[1], lg.sr[0], lg.sr[1], 0, 18);
         knock(ctx, [sp], kAl * pLeg);
-        hatch(ctx, sp, { key: k + ':shoeH' + i, color: 'line', alpha: 0.7 * al * pLeg, gap: 3, w: 1.5, angle: -0.5, jitter: 2 });
+        vol(P.ellShape(lg.shoe[0], lg.shoe[1], lg.sr[0], lg.sr[1], 0, 0.8), spec.shoes || 'hairDark', 'shoe' + i, pLeg, { w: 0.35, shine: 1.2, noCore: true });
         stroke(ctx, ellipsePts(lg.shoe[0], lg.shoe[1], lg.sr[0], lg.sr[1], 0, k + 'sh' + i), { key: k + ':shoe' + i, closed: true, w: 2.2, alpha: al, p: pLeg });
       });
-      // платье
+      // платье: цилиндр, плечи смотрят вверх
       const pDr = pp(0.35, 0.7);
       knock(ctx, [g.dress], kAl * clamp(pDr * 3));
-      hatch(ctx, g.dress, { key: k + ':dressH', color: spec.dress, alpha: 0.42 * al, p: pp(0.6, 0.95), gap: 6.5, w: 1.6, angle: -0.95, jitter: 5 });
-      // тень складок
-      const sh = [g.up(g.sw * 0.25, g.shY + R * 0.4), g.up(g.sw * 0.9, g.shY + R * 0.4), g.low(g.sw * 1.1, g.hemY), g.low(g.sw * 0.45, g.hemY)];
-      hatch(ctx, sh, { key: k + ':dressS', color: 'soft', alpha: 0.25 * al, p: pp(0.7, 1), gap: 5, w: 1.2, angle: 0.8, jitter: 3 });
+      vol(P.polyShape(g.dress, { vy: (f) => lerp(-0.5, 0.25, f) }), spec.dress, 'dress', pp(0.45, 0.95), { w: 0.9 });
+      // складки
+      for (const sd of [-0.45, 0.1, 0.55]) {
+        const a = g.low(g.sw * sd, g.hipY + R * 0.4), b = g.low(g.sw * sd * 1.35, g.hemY - R * 0.1);
+        stroke(ctx, [a, b], { key: k + ':fold' + sd, w: 1.3, alpha: al * 0.45 * pp(0.6, 1), sketch: false });
+      }
       stroke(ctx, g.dress, { key: k + ':dress', closed: true, w: 2.6, alpha: al, p: pDr });
       drawPattern(ctx, spec, g, k, al, pp(0.65, 1));
       // шея и голова
       const pHd = pp(0, 0.25);
+      const neck = [g.up(0, g.headCY + R * 0.7), g.up(0, g.neckY + R * 0.12)];
+      vol(P.capsuleShape(neck, R * 0.22), 'skin', 'neck', pHd, { w: 0.35, noCore: true, shadowAt: 0.45 });
       stroke(ctx, [g.up(-R * 0.2, g.headCY + R * 0.85), g.up(-R * 0.22, g.neckY + R * 0.1)], { key: k + ':nk1', w: 2, alpha: al, p: pHd, sketch: false });
       stroke(ctx, [g.up(R * 0.2, g.headCY + R * 0.85), g.up(R * 0.22, g.neckY + R * 0.1)], { key: k + ':nk2', w: 2, alpha: al, p: pHd, sketch: false });
       const headPoly = ellipsePoly(g.head[0], g.head[1], R * 0.96, R * 1.04, g.lean, 30);
       knock(ctx, [headPoly], kAl * clamp(pHd * 3));
+      vol(P.ellShape(g.head[0], g.head[1], R * 0.95, R * 1.03, g.lean), 'skin', 'head', pHd, { w: 0.7, shine: 0.55, shadowAt: 0.12, noCore: true, dense: 0.85 });
       stroke(ctx, ellipsePts(g.head[0], g.head[1], R * 0.96, R * 1.04, g.lean, k + 'hd'), { key: k + ':head', closed: true, w: 2.6, alpha: al, p: pHd });
       // уши
       for (const sd of [-1, 1]) {
@@ -574,25 +641,24 @@
       // причёска (у Ани в детстве — косички, потом пучок)
       const hm = spec.hairKid === spec.hairAdult ? 0 : seg(g.age, 11, 15);
       const pH = pp(0.15, 0.45);
-      const gray = spec.old ? 1 : 0;
-      if (hm < 1) drawHair(ctx, spec.hairKid, g, k, al, pH, spec.hairColor, spec.hairAlpha, 1 - hm);
-      if (hm > 0) drawHair(ctx, spec.hairAdult, g, k + 'a', al, pH, spec.hairColor, spec.hairAlpha, hm);
+      if (hm < 1) drawHair(ctx, spec.hairKid, g, k, al, pH, spec.hairColor, 1 - hm);
+      if (hm > 0) drawHair(ctx, spec.hairAdult, g, k + 'a', al, pH, spec.hairColor, hm);
       if (spec.glasses) drawGlasses(ctx, g, k, al, pp(0.4, 0.55));
       if (st.clip !== undefined && st.clip > 0) { // заколка в волосах Сони
         const c = clipPos(g);
         knock(ctx, [heartPts(c[0], c[1], R * 0.2, 0.3)], al * st.clip);
         drawHeart(ctx, c[0], c[1], R * 0.2, k + ':clip', al * st.clip, pp(0.4, 0.6));
       }
-      void gray;
     }
     if (layer === 'all' || layer === 'arms') {
       const pAr = pp(0.7, 0.95);
       g.arms.forEach((ar, i) => {
         knock(ctx, [ar.poly], kAl * clamp(pAr * 3));
+        vol(P.capsuleShape([ar.S, ar.E, ar.Hn], ar.w, ar.w * 0.85), spec.dress, 'arm' + i, pAr, { w: 0.5 });
         stroke(ctx, ar.poly, { key: k + ':arm' + i, closed: true, w: 2.4, alpha: al, p: pAr });
-        hatch(ctx, ar.poly, { key: k + ':armH' + i, color: spec.dress, alpha: 0.35 * al, p: pAr, gap: 6, w: 1.4, angle: -0.95, jitter: 3 });
         const hp = ellipsePoly(ar.Hn[0], ar.Hn[1], ar.hr, ar.hr * 1.05, 0, 18);
         knock(ctx, [hp], kAl * clamp(pAr * 3));
+        vol(P.ellShape(ar.Hn[0], ar.Hn[1], ar.hr, ar.hr * 1.05), 'skin', 'hand' + i, pAr, { w: 0.3, noCore: true, shine: 0.5 });
         stroke(ctx, ellipsePts(ar.Hn[0], ar.Hn[1], ar.hr, ar.hr * 1.05, 0, k + 'hn' + i), { key: k + ':hand' + i, closed: true, w: 2.2, alpha: al, p: pAr });
       });
     }
@@ -607,16 +673,19 @@
     const lk = (st.look === undefined ? g.f * 0.6 : st.look) * 0.08;
     const ey = lerp(0.2, 0.06, g.a), ex = lerp(0.36, 0.33, g.a);
     const face = st.mood || 'smile';
+    const lc = P.L.light;
     for (const sd of [-1, 1]) {
       const e = F(sd * ex + lk, ey);
       if (face === 'happy') {
         stroke(ctx, arcPts(e[0], e[1] + R * 0.04, R * 0.1, R * 0.08, Math.PI * 1.1, Math.PI * 1.9, 6), { key: k + ':eh' + sd, w: 2.2, alpha: al * p, sketch: false, gaps: false });
       } else {
         blob(ctx, e[0], e[1], R * 0.075, R * 0.1, { key: k + ':eye' + sd, alpha: al * p });
+        lc.fillStyle = P.col('light', 0.95 * al * p);
+        lc.beginPath(); lc.arc(e[0] - R * 0.025, e[1] - R * 0.04, Math.max(1 / P.z, R * 0.03), 0, 6.283); lc.fill();
       }
-      // румянец
+      // румянец мелком
       const ch = F(sd * 0.56 + lk * 0.5, ey + 0.32);
-      hatch(ctx, ellipsePoly(ch[0], ch[1], R * 0.15, R * 0.09, 0, 14), { key: k + ':ch' + sd, color: 'warm', alpha: 0.28 * al * p, gap: 2.6, w: 1.2, angle: -0.5, jitter: 1 });
+      P.crayon(P.L.color, P.ellShape(ch[0], ch[1], R * 0.17, R * 0.11), { key: k + ':ch' + sd, color: 'warm', alpha: 0.42 * al * p, w: 5, gap: 3.5, angle: -0.4, maxLen: 20 });
       if (spec.old) stroke(ctx, arcPts(...F(sd * (ex + 0.17) + lk, ey + 0.02), R * 0.08, R * 0.1, sd < 0 ? 2.4 : -0.6, sd < 0 ? 3.6 : 0.6, 5), { key: k + ':wr' + sd, w: 1.2, alpha: al * p * 0.6, sketch: false, gaps: false });
     }
     // нос и рот
@@ -625,7 +694,9 @@
     const my = lerp(0.52, 0.47, g.a);
     if (face === 'open') {
       const m = F(lk, my);
-      stroke(ctx, curve([[m[0] - R * 0.14, m[1] - R * 0.03], [m[0], m[1] + R * 0.12], [m[0] + R * 0.14, m[1] - R * 0.03]], false, 5).concat([[m[0] - R * 0.14, m[1] - R * 0.03]]), { key: k + ':mo', w: 2, alpha: al * p, sketch: false });
+      const mouth = curve([[m[0] - R * 0.14, m[1] - R * 0.03], [m[0], m[1] + R * 0.12], [m[0] + R * 0.14, m[1] - R * 0.03]], false, 5);
+      P.crayon(P.L.color, P.polyShape(mouth), { key: k + ':moF', color: 'warm:dk', alpha: 0.6 * al * p, w: 3, gap: 2.5 });
+      stroke(ctx, mouth.concat([[m[0] - R * 0.14, m[1] - R * 0.03]]), { key: k + ':mo', w: 2, alpha: al * p, sketch: false });
     } else {
       stroke(ctx, curve([F(-0.19 + lk, my - 0.03), F(lk, my + 0.08), F(0.19 + lk, my - 0.03)], false, 5), { key: k + ':mouth', w: 2.1, alpha: al * p, sketch: false });
     }
@@ -635,57 +706,72 @@
     const R = g.R, hc = g.head, c = Math.cos(g.lean), s = Math.sin(g.lean);
     const F = (x, y) => [hc[0] + (x * c - y * s) * R, hc[1] + (x * s + y * c) * R];
     const lk = g.f * 0.6 * 0.08, ey = lerp(0.2, 0.06, g.a), ex = lerp(0.36, 0.33, g.a);
+    const lc = P.L.light;
     for (const sd of [-1, 1]) {
       const e = F(sd * ex + lk, ey);
       stroke(ctx, ellipsePts(e[0], e[1], R * 0.21, R * 0.18, 0, k + 'gl' + sd), { key: k + ':gl' + sd, closed: true, w: 1.8, alpha: al, p });
+      // блик на стекле
+      lc.strokeStyle = P.col('light', 0.8 * al * p); lc.lineWidth = 2.2 / P.z; lc.lineCap = 'round';
+      lc.beginPath(); lc.moveTo(e[0] - R * 0.1, e[1] - R * 0.02); lc.lineTo(e[0] - R * 0.02, e[1] - R * 0.1); lc.stroke();
     }
     stroke(ctx, [F(-ex + 0.21 + lk, ey - 0.02), F(ex - 0.21 + lk, ey - 0.02)], { key: k + ':glb', w: 1.6, alpha: al, p, sketch: false, gaps: false });
   }
   function drawPattern(ctx, spec, g, k, al, p) {
     if (p <= 0) return;
     const R = g.R;
-    ctx.save();
-    ctx.beginPath();
-    ctx.moveTo(g.dress[0][0], g.dress[0][1]);
-    for (let i = 1; i < g.dress.length; i++) ctx.lineTo(g.dress[i][0], g.dress[i][1]);
-    ctx.closePath();
-    ctx.clip();
-    const r = P.staticRng(k + ':pat');
+    const L = P.L;
+    const clipTo = (c) => {
+      c.save();
+      c.beginPath();
+      c.moveTo(g.dress[0][0], g.dress[0][1]);
+      for (let i = 1; i < g.dress.length; i++) c.lineTo(g.dress[i][0], g.dress[i][1]);
+      c.closePath();
+      c.clip();
+    };
+    clipTo(ctx); clipTo(L.light);
     if (spec.pattern === 'dots') {
+      // белый горох мелком
+      L.light.fillStyle = P.col('light', 0.85 * al * p);
       for (let iy = 0; iy < 9; iy++) for (let ix = -4; ix <= 4; ix++) {
         const lx = ix * R * 0.42 + (iy % 2) * R * 0.21, ly = g.shY + R * 0.35 + iy * R * 0.46;
         if (ly > g.hemY) continue;
         const pt = ly < g.hipY ? g.up(lx, ly) : g.low(lx, ly);
         if ((ix + iy * 9) / 81 + 0.5 > p * 1.5) continue;
-        stroke(ctx, ellipsePts(pt[0], pt[1], R * 0.07, R * 0.07, 0, k + 'dt' + ix + '_' + iy), { key: k + ':dt' + ix + '_' + iy, closed: true, w: 1.6, alpha: al * 0.75, sketch: false, gaps: false, amp: 0.5 });
+        L.light.beginPath(); L.light.arc(pt[0], pt[1], R * 0.075, 0, 6.283); L.light.fill();
       }
-      // белый воротничок
-      for (const sd of [-1, 1]) stroke(ctx, curve([g.up(0, g.neckY + R * 0.26), g.up(sd * R * 0.3, g.neckY + R * 0.5), g.up(sd * R * 0.42, g.neckY + R * 0.06)], false, 6), { key: k + ':col' + sd, w: 2, alpha: al * p });
+      for (const sd of [-1, 1]) {
+        const col = [g.up(0, g.neckY + R * 0.26), g.up(sd * R * 0.3, g.neckY + R * 0.5), g.up(sd * R * 0.42, g.neckY + R * 0.06)];
+        P.crayon(L.light, P.polyShape(curve(col, false, 6)), { key: k + ':colF' + sd, color: 'light', alpha: 0.9 * al * p, w: 4, gap: 3 });
+        stroke(ctx, curve(col, false, 6), { key: k + ':col' + sd, w: 2, alpha: al * p });
+      }
     } else if (spec.pattern === 'stripes') {
       for (let i = 0; i < 9; i++) {
         const ly = g.shY + R * (0.6 + i * 0.52);
         if (ly > g.hemY || i / 9 > p) continue;
-        const L = ly < g.hipY ? [g.up(-g.sw * 1.4, ly), g.up(g.sw * 1.4, ly)] : [g.low(-g.sw * 1.4, ly), g.low(g.sw * 1.4, ly)];
-        stroke(ctx, L, { key: k + ':str' + i, color: spec.dress, w: 4, alpha: al * 0.8, sketch: false });
+        const Ln = ly < g.hipY ? [g.up(-g.sw * 1.4, ly), g.up(g.sw * 1.4, ly)] : [g.low(-g.sw * 1.4, ly), g.low(g.sw * 1.4, ly)];
+        stroke(L.light, Ln, { key: k + ':str' + i, color: 'light', w: 5, alpha: al * 0.75, sketch: false });
       }
     } else if (spec.pattern === 'zigzag') {
       const zy = g.shY + R * 1.05, pts = [];
       for (let i = -6; i <= 6; i++) pts.push(g.up(i * R * 0.24, zy + (i % 2 ? R * 0.2 : 0)));
-      stroke(ctx, pts, { key: k + ':zz', color: 'a1', w: 2.6, alpha: al, p });
-      const pts2 = pts.map(([x, y]) => [x, y + R * 0.35]);
-      stroke(ctx, pts2, { key: k + ':zz2', color: 'a1', w: 2.2, alpha: al * 0.8, p });
+      stroke(ctx, pts, { key: k + ':zz', color: 'a1', w: 3.2, alpha: al, p });
+      stroke(ctx, pts.map(([x, y]) => [x, y + R * 0.35]), { key: k + ':zz2', color: 'a1', w: 2.6, alpha: al * 0.8, p });
     } else if (spec.pattern === 'cardigan') {
       stroke(ctx, [g.up(0, g.neckY + R * 0.3), g.up(0, g.waistY + R * 0.3)], { key: k + ':cd', w: 2, alpha: al, p });
       for (let i = 0; i < 3; i++) { const b = g.up(R * 0.1, g.neckY + R * (0.65 + i * 0.5)); blob(ctx, b[0], b[1], R * 0.06, R * 0.06, { key: k + ':cb' + i, alpha: al * p }); }
-      // шаль / кофта
       for (const sd of [-1, 1]) stroke(ctx, curve([g.up(sd * R * 0.35, g.neckY), g.up(sd * R * 0.12, g.neckY + R * 0.6), g.up(sd * R * 0.05, g.waistY)], false, 5), { key: k + ':lap' + sd, w: 1.8, alpha: al * 0.8, p });
     } else if (spec.pattern === 'collar') {
-      for (const sd of [-1, 1]) stroke(ctx, curve([g.up(0, g.neckY + R * 0.26), g.up(sd * R * 0.32, g.neckY + R * 0.52), g.up(sd * R * 0.44, g.neckY + R * 0.06)], false, 6), { key: k + ':col' + sd, w: 2, alpha: al * p });
+      for (const sd of [-1, 1]) {
+        const col = [g.up(0, g.neckY + R * 0.26), g.up(sd * R * 0.32, g.neckY + R * 0.52), g.up(sd * R * 0.44, g.neckY + R * 0.06)];
+        P.crayon(L.light, P.polyShape(curve(col, false, 6)), { key: k + ':colF' + sd, color: 'light', alpha: 0.9 * al * p, w: 4, gap: 3 });
+        stroke(ctx, curve(col, false, 6), { key: k + ':col' + sd, w: 2, alpha: al * p });
+      }
+    }
+    ctx.restore(); L.light.restore();
+    if (spec.pattern === 'collar') {
       const pc = g.up(-R * 0.35, g.waistY + R * 0.4);
       drawHeart(ctx, pc[0], pc[1], R * 0.14, k + ':pocket', al * p, p, 0);
     }
-    void r;
-    ctx.restore();
   }
 
   // =====================================================================
@@ -697,16 +783,48 @@
     stroke(ctx, [[-240, GROUND - 24], [2160, GROUND - 22]], { key: key + ':bb', w: 1.8, alpha: al * 0.6, p });
     for (let i = 0; i < 17; i++) {
       const x = -240 + i * 150;
-      stroke(ctx, [[x, GROUND + 4], [x + (x - 960) * 0.42, 1120]], { key: key + ':bd' + i, w: 1.4, alpha: al * 0.35, p: seg(p, i / 20, 1), sketch: false });
+      stroke(ctx, [[x, GROUND + 4], [x + (x - 960) * 0.42, 1120]], { key: key + ':bd' + i, w: 1.4, alpha: al * 0.4, p: seg(p, i / 20, 1), sketch: false });
     }
-    hatch(ctx, [[-240, GROUND + 4], [2160, GROUND + 4], [2160, 1120], [-240, 1120]], { key: key + ':flH', color: 'soft', alpha: 0.12 * al, p, gap: 9, angle: -0.15, maxLen: 140 });
+  }
+  // стена и пол мелком; тон темнеет вдали от света; световое пятно от окна
+  function drawRoom(key, wall, p, al, o = {}) {
+    if (al <= 0.004 || p <= 0) return;
+    const L = P.L, lp = P.light;
+    const far = (x, y) => Math.hypot(x - lp.x, (y - lp.y) * 1.25);
+    const wallS = P.rectShape(-420, -320, 2340, GROUND - 2);
+    const base = { still: true, world: true, p, step: 7, jitter: 14 };
+    P.crayon(L.color, wallS, Object.assign({}, base, { key: key + ':w1', color: wall, alpha: 0.36 * al, w: 18, gap: 11, angle: -0.35, maxLen: 210 }));
+    P.crayon(L.color, wallS, Object.assign({}, base, { key: key + ':w2', color: wall, alpha: 0.24 * al, w: 16, gap: 13, angle: 0.5, maxLen: 160, cond: (n, x, y) => far(x, y) > 520 }));
+    P.crayon(L.color, wallS, Object.assign({}, base, { key: key + ':w3', color: wall + ':sh', alpha: 0.17 * al, w: 15, gap: 12, angle: -0.6, maxLen: 120, cond: (n, x, y) => far(x, y) > 1000 + Math.sin(x * 0.004 + y * 0.003) * 160 || y > GROUND - 60 }));
+    // плинтус
+    P.crayon(L.color, P.rectShape(-420, GROUND - 24, 2340, GROUND), Object.assign({}, base, { key: key + ':bb', color: 'cream', alpha: 0.6 * al, w: 10, gap: 6, angle: 0.03, maxLen: 260 }));
+    // пол
+    const floorS = P.rectShape(-420, GROUND, 2340, 1320);
+    P.crayon(L.color, floorS, Object.assign({}, base, { key: key + ':f1', color: 'floor', alpha: 0.5 * al, w: 16, gap: 9, angle: 0.02, maxLen: 280 }));
+    P.crayon(L.color, floorS, Object.assign({}, base, { key: key + ':f2', color: 'floor:sh', alpha: 0.32 * al, w: 14, gap: 10, angle: -0.1, maxLen: 200, cond: (n, x, y) => y < GROUND + 34 || far(x, y) > 1000 }));
+    if (o.window) {
+      const [x0, , x1] = o.window;
+      const cx = (x0 + x1) / 2;
+      const patch = [[x0 + 10, GROUND + 14], [x1 - 10, GROUND + 14], [x1 + (x1 - cx) * 0.9, 1110], [x0 - (cx - x0) * 0.9, 1110]];
+      P.crayon(L.light, P.polyShape(patch), Object.assign({}, base, { key: key + ':lp', color: 'light', alpha: 0.42 * al * (o.sun === undefined ? 1 : o.sun), w: 14, gap: 9, angle: 0.06, maxLen: 120 }));
+    }
   }
 
   const DOOR = { l0: 1426, l1: 1468, r0: 1662, r1: 1704, top: 150, lint: 194 };
   function drawDoor(ctx, key, p, al) {
     if (al <= 0.004 || p <= 0) return;
-    const D = DOOR, G = GROUND;
-    hatch(ctx, [[D.l1, D.lint], [D.r0, D.lint], [D.r0, G], [D.l1, G]], { key: key + ':in', color: 'soft', alpha: 0.2 * al, p, gap: 8, angle: -1.25, maxLen: 160 });
+    const D = DOOR, G = GROUND, L = P.L;
+    // проём: соседняя комната в тени
+    const inner = P.rectShape(D.l1, D.lint, D.r0, G);
+    P.crayon(L.color, inner, { key: key + ':in1', color: 'shadow', alpha: 0.24 * al, w: 14, gap: 9, angle: -1.2, still: true, world: true, p, maxLen: 170 });
+    P.crayon(L.color, inner, { key: key + ':in2', color: 'shadow', alpha: 0.2 * al, w: 12, gap: 10, angle: 0.4, still: true, world: true, p, maxLen: 120, cond: (n, x) => x < D.l1 + 60 || x > D.r0 - 50 });
+    // наличник — крашеное дерево с объёмом
+    const frame = { still: true, noCore: true, w: 0.7, alpha: al, p };
+    P.volume(P.rectShape(D.l0, D.top, D.l1, G, [0.25, -0.1, 1]), Object.assign({ key: key + ':pl', color: 'cream' }, frame));
+    P.volume(P.rectShape(D.r0, D.top, D.r1, G, [-0.25, -0.1, 1]), Object.assign({ key: key + ':pr', color: 'cream' }, frame));
+    P.volume(P.rectShape(D.l0, D.top, D.r1, D.lint, [0, -0.3, 1]), Object.assign({ key: key + ':pt', color: 'cream' }, frame));
+    // тень наличника на стене
+    P.crayon(L.color, P.rectShape(D.r1, D.top + 10, D.r1 + 16, G), { key: key + ':sh', color: 'shadow', alpha: 0.28 * al, w: 8, gap: 5, angle: -1.3, still: true, world: true, p });
     stroke(ctx, [[D.l0, G], [D.l0, D.top], [D.r1, D.top], [D.r1, G]], { key: key + ':out', w: 2.8, alpha: al, p });
     stroke(ctx, [[D.l1, G], [D.l1, D.lint], [D.r0, D.lint], [D.r0, G]], { key: key + ':inn', w: 2.6, alpha: al, p: seg(p, 0.15, 1) });
     for (let i = 0; i < 3; i++) {
@@ -744,123 +862,148 @@
   function drawTree(ctx, key, x, p, al) {
     if (al <= 0.004 || p <= 0) return;
     const G = GROUND, top = G - 500;
-    const tiers = [[top + 10, top + 150, 74], [top + 95, top + 255, 125], [top + 190, top + 360, 172], [top + 290, G - 62, 215]];
-    const allPolys = [];
-    tiers.forEach(([ty, by, hw], i) => {
+    P.castShadow(x, G, 230, 26, { key: key + ':cast', alpha: al * seg(p, 0.3, 0.8), h: 260 });
+    // ствол
+    const pT = seg(p, 0.4, 0.7);
+    P.volume(P.rectShape(x - 22, G - 64, x + 22, G), { key: key + ':trV', color: 'floor', alpha: al, p: pT, w: 0.6 });
+    stroke(ctx, [[x - 22, G - 62], [x - 22, G], [x + 22, G], [x + 22, G - 62]], { key: key + ':trunk', w: 2.4, alpha: al, p: pT });
+    const tiers = [[top + 290, G - 62, 215], [top + 190, top + 360, 172], [top + 95, top + 255, 125], [top + 10, top + 150, 74]];
+    tiers.forEach(([ty, by, hw], j) => {
+      const i = 3 - j;
       const pts = [[x - hw, by], [x - hw * 0.18, ty + 14], [x, ty], [x + hw * 0.18, ty + 14], [x + hw, by]];
       const n = 3 + i;
       const sc = [];
-      for (let j = 0; j <= n * 6; j++) { const u = j / (n * 6); sc.push([x + hw - u * hw * 2, by + Math.abs(Math.sin(u * n * Math.PI)) * 16]); }
+      for (let q = 0; q <= n * 6; q++) { const u = q / (n * 6); sc.push([x + hw - u * hw * 2, by + Math.abs(Math.sin(u * n * Math.PI)) * 16]); }
       const poly = pts.concat(sc.slice(1));
-      allPolys.push(poly);
       const pt = seg(p, i * 0.12, 0.45 + i * 0.12);
       knock(ctx, [poly], al * clamp(pt * 3));
-      hatch(ctx, poly, { key: key + ':tH' + i, color: 'a2', alpha: 0.5 * al, p: pt, gap: 5.5, w: 1.5, angle: -1.05, jitter: 5 });
+      P.volume(P.polyShape(poly, { round: 0.95, vy: (f) => lerp(-0.7, 0.55, f) }), { key: key + ':tV' + i, color: 'a2', alpha: al, p: pt, w: 0.9, dense: 1.15 });
+      // иголки: короткие штрихи по нижнему краю
       stroke(ctx, pts, { key: key + ':t' + i, w: 2.6, alpha: al, p: pt });
       stroke(ctx, sc, { key: key + ':ts' + i, w: 2.2, alpha: al, p: pt });
-      // гирлянда
-      const gw = []; for (let j = 0; j <= 10; j++) { const u = j / 10; gw.push([x - hw * 0.75 + u * hw * 1.5, lerp(ty + (by - ty) * 0.45, ty + (by - ty) * 0.8, u) + Math.sin(u * 6) * 6]); }
-      stroke(ctx, gw, { key: key + ':gl' + i, color: 'fur', w: 1.8, alpha: al * 0.8, p: seg(p, 0.5, 1) });
+      const gw = []; for (let q = 0; q <= 10; q++) { const u = q / 10; gw.push([x - hw * 0.75 + u * hw * 1.5, lerp(ty + (by - ty) * 0.45, ty + (by - ty) * 0.8, u) + Math.sin(u * 6) * 6]); }
+      stroke(P.L.light, gw, { key: key + ':gl' + i, color: 'cream', w: 3, alpha: al * 0.9, p: seg(p, 0.5, 1) });
     });
-    // ствол
-    stroke(ctx, [[x - 22, G - 62], [x - 22, G], [x + 22, G], [x + 22, G - 62]], { key: key + ':trunk', w: 2.4, alpha: al, p: seg(p, 0.4, 0.7) });
     // звезда
     const st = [];
     for (let i = 0; i <= 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, r = i % 2 ? 11 : 27; st.push([x + Math.cos(a) * r, top - 12 + Math.sin(a) * r]); }
-    hatch(ctx, st, { key: key + ':starH', color: 'fur', alpha: 0.7 * al, p: seg(p, 0.6, 0.9), gap: 3, w: 1.4 });
-    stroke(ctx, st, { key: key + ':star', w: 2.2, alpha: al, p: seg(p, 0.55, 0.85) });
+    const pS = seg(p, 0.55, 0.85);
+    P.volume(P.polyShape(st, { round: 0.7 }), { key: key + ':starV', color: 'fur', alpha: al, p: pS, w: 0.4, shine: 1.3, noCore: true });
+    stroke(ctx, st, { key: key + ':star', w: 2.2, alpha: al, p: pS });
     // шары
-    [[-40, 120, 'a1'], [55, 175, 'fur'], [-85, 270, 'fur'], [70, 300, 'a1'], [-20, 330, 'a2'], [-140, 400, 'a1'], [120, 410, 'fur'], [10, 220, 'a1']].forEach(([dx, dy, c], i) => {
+    [[-40, 120, 'a1'], [55, 175, 'warm'], [-85, 270, 'fur'], [70, 300, 'a1'], [-20, 330, 'warm'], [-95, 395, 'a1'], [120, 410, 'fur'], [10, 220, 'a1']].forEach(([dx, dy, c], i) => {
       const bp = seg(p, 0.6 + i * 0.04, 0.8 + i * 0.03);
       if (bp <= 0) return;
-      const poly = ellipsePoly(x + dx, top + dy, 13, 13, 0, 16);
+      const poly = ellipsePoly(x + dx, top + dy, 14, 14, 0, 16);
       knock(ctx, [poly], al * bp);
-      hatch(ctx, poly, { key: key + ':bH' + i, color: c, alpha: 0.8 * al, p: bp, gap: 3, w: 1.4, jitter: 1.5 });
-      stroke(ctx, ellipsePts(x + dx, top + dy, 13, 13, 0, key + 'b' + i), { key: key + ':b' + i, closed: true, w: 2, alpha: al, p: bp });
+      P.volume(P.ellShape(x + dx, top + dy, 14, 14), { key: key + ':bV' + i, color: c, alpha: al * bp, w: 0.35, shine: 1.4, lightAt: 0.75 });
+      stroke(ctx, ellipsePts(x + dx, top + dy, 14, 14, 0, key + 'b' + i), { key: key + ':b' + i, closed: true, w: 2, alpha: al, p: bp });
     });
   }
   function drawGift(ctx, key, x, p, al) {
     if (al <= 0.004 || p <= 0) return;
     const G = GROUND, w = 92, h = 70;
     const box = [[x - w / 2, G], [x - w / 2, G - h], [x + w / 2, G - h], [x + w / 2, G]];
-    knock(ctx, [box], al * p);
-    hatch(ctx, box, { key: key + ':gH', color: 'a1', alpha: 0.4 * al, p, gap: 5, angle: -0.9 });
-    stroke(ctx, box, { key: key + ':g', closed: true, w: 2.4, alpha: al, p });
-    stroke(ctx, [[x - 6, G], [x - 6, G - h]], { key: key + ':r1', color: 'fur', w: 5, alpha: al, p: seg(p, 0.4, 1), sketch: false });
-    stroke(ctx, [[x - w / 2, G - h * 0.55], [x + w / 2, G - h * 0.55]], { key: key + ':r2', color: 'fur', w: 5, alpha: al, p: seg(p, 0.5, 1), sketch: false });
-    for (const d of [-1, 1]) stroke(ctx, curve([[x - 6, G - h], [x - 6 + d * 30, G - h - 26], [x - 6 + d * 8, G - h - 6]], false, 6), { key: key + ':bow' + d, color: 'fur', w: 3, alpha: al, p: seg(p, 0.6, 1) });
+    const top = [[x - w / 2, G - h], [x - w / 2 + 22, G - h - 20], [x + w / 2 + 22, G - h - 20], [x + w / 2, G - h]];
+    const side = [[x + w / 2, G], [x + w / 2, G - h], [x + w / 2 + 22, G - h - 20], [x + w / 2 + 22, G - 20]];
+    P.castShadow(x + 10, G, 70, 12, { key: key + ':cast', alpha: al * p, h: 60 });
+    knock(ctx, [box, top, side], al * p);
+    P.volume(P.polyShape(box, { normal: [0, 0, 1] }), { key: key + ':fV', color: 'a1', alpha: al, p, w: 0.6, noCore: true });
+    P.volume(P.polyShape(top, { normal: [0, -1, 0.6] }), { key: key + ':tV', color: 'a1', alpha: al, p, w: 0.5, noCore: true });
+    P.volume(P.polyShape(side, { normal: [1, 0, 0.5] }), { key: key + ':sV', color: 'a1', alpha: al, p, w: 0.5, noCore: true });
+    for (const pl of [box, top, side]) stroke(ctx, pl, { key: key + ':g' + pl[1][0], closed: true, w: 2.2, alpha: al, p });
+    stroke(P.L.color, [[x - 6, G], [x - 6, G - h], [x + 16, G - h - 20]], { key: key + ':r1', color: 'fur', w: 6, alpha: al, p: seg(p, 0.4, 1), sketch: false });
+    stroke(P.L.color, [[x - w / 2, G - h * 0.55], [x + w / 2, G - h * 0.55], [x + w / 2 + 22, G - h * 0.55 - 20]], { key: key + ':r2', color: 'fur', w: 6, alpha: al, p: seg(p, 0.5, 1), sketch: false });
+    for (const d of [-1, 1]) stroke(ctx, curve([[x + 5, G - h - 10], [x + 5 + d * 30, G - h - 36], [x + 5 + d * 8, G - h - 16]], false, 6), { key: key + ':bow' + d, color: 'fur:dk', w: 3, alpha: al, p: seg(p, 0.6, 1) });
   }
   function drawWindow(ctx, key, x0, y0, x1, y1, p, al, o = {}) {
     if (al <= 0.004 || p <= 0) return;
+    const L = P.L;
     const pf = seg(p, 0, 0.6), pd = seg(p, 0.4, 1);
     const in0 = 16;
+    const glass = P.rectShape(x0 + in0, y0 + in0, x1 - in0, y1 - in0);
+    // небо или зимняя белизна за стеклом
+    P.crayon(L.color, glass, { key: key + ':sky', color: o.frost ? 'wallA' : 'a1', alpha: (o.frost ? 0.32 : 0.28) * al, w: 12, gap: 8, angle: -0.3, p: pd, still: true, world: true, maxLen: 90 });
+    P.crayon(L.light, glass, { key: key + ':skyL', color: 'light', alpha: 0.55 * al, w: 12, gap: 9, angle: -0.3, p: pd, still: true, world: true, maxLen: 70, cond: (n, x, y) => y > y0 + (y1 - y0) * 0.5 || (o.frost && (x - x0) + (y1 - y) < 170) });
     if (o.sun) {
       const sx = x1 - 70, sy = y0 + 72;
-      hatch(ctx, [[x0 + in0, y0 + in0], [x1 - in0, y0 + in0], [x1 - in0, y1 - in0], [x0 + in0, y1 - in0]], { key: key + ':sky', color: 'a1', alpha: 0.16 * al, p: pd, gap: 9, angle: -0.3, maxLen: 70 });
       const sp = ellipsePoly(sx, sy, 34, 34, 0, 20);
       knock(ctx, [sp], al * pd);
-      hatch(ctx, sp, { key: key + ':sunH', color: 'fur', alpha: 0.7 * al, p: pd, gap: 3.2, w: 1.5 });
-      stroke(ctx, ellipsePts(sx, sy, 34, 34, 0, key + 'sun'), { key: key + ':sun', closed: true, color: 'fur', w: 2.4, alpha: al, p: pd });
-      for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4 + 0.2; stroke(ctx, [[sx + Math.cos(a) * 46, sy + Math.sin(a) * 46], [sx + Math.cos(a) * 64, sy + Math.sin(a) * 64]], { key: key + ':ray' + i, color: 'fur', w: 2.2, alpha: al * pd, sketch: false }); }
+      P.crayon(L.color, P.ellShape(sx, sy, 34, 34), { key: key + ':sunF', color: 'fur', alpha: 0.75 * al, w: 8, gap: 5, angle: -0.6, p: pd });
+      P.crayon(L.light, P.ellShape(sx - 8, sy - 8, 20, 20), { key: key + ':sunL', color: 'light', alpha: 0.8 * al, w: 6, gap: 5, angle: 0.4, p: pd });
+      stroke(ctx, ellipsePts(sx, sy, 34, 34, 0, key + 'sun'), { key: key + ':sun', closed: true, color: 'fur:dk', w: 2.2, alpha: al, p: pd });
+      for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4 + 0.2; stroke(L.color, [[sx + Math.cos(a) * 46, sy + Math.sin(a) * 46], [sx + Math.cos(a) * 66, sy + Math.sin(a) * 66]], { key: key + ':ray' + i, color: 'fur', w: 4, alpha: al * pd, sketch: false }); }
     }
+    // рама — крашеное дерево
+    const bars = [[x0, y0, x1, y0 + in0], [x0, y1 - in0, x1, y1], [x0, y0, x0 + in0, y1], [x1 - in0, y0, x1, y1]];
+    const mx = (x0 + x1) / 2, my = y0 + (y1 - y0) * 0.38;
+    bars.push([mx - 5, y0 + in0, mx + 5, y1 - in0], [x0 + in0, my - 5, x1 - in0, my + 5]);
+    bars.forEach((b, i) => P.volume(P.rectShape(b[0], b[1], b[2], b[3], [0, -0.2, 1]), { key: key + ':bar' + i, color: 'cream', alpha: al, p: pf, still: true, noCore: true, w: 0.5 }));
     stroke(ctx, [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], { key: key + ':fo', closed: true, w: 2.8, alpha: al, p: pf });
     stroke(ctx, [[x0 + in0, y0 + in0], [x1 - in0, y0 + in0], [x1 - in0, y1 - in0], [x0 + in0, y1 - in0]], { key: key + ':fi', closed: true, w: 2, alpha: al, p: pf });
-    const mx = (x0 + x1) / 2, my = y0 + (y1 - y0) * 0.38;
     stroke(ctx, [[mx, y0 + in0], [mx, y1 - in0]], { key: key + ':mv', w: 2.2, alpha: al, p: pd });
     stroke(ctx, [[x0 + in0, my], [x1 - in0, my]], { key: key + ':mh', w: 2.2, alpha: al, p: pd });
     // подоконник
-    stroke(ctx, [[x0 - 24, y1 + 4], [x1 + 24, y1 + 4], [x1 + 24, y1 + 22], [x0 - 24, y1 + 22]], { key: key + ':sill', closed: true, w: 2.2, alpha: al, p: pd });
+    const sill = [[x0 - 24, y1 + 4], [x1 + 24, y1 + 4], [x1 + 24, y1 + 22], [x0 - 24, y1 + 22]];
+    P.volume(P.polyShape(sill, { normal: [0, -0.6, 1] }), { key: key + ':sillV', color: 'cream', alpha: al, p: pd, still: true, noCore: true, w: 0.5 });
+    P.crayon(L.color, P.rectShape(x0 - 20, y1 + 22, x1 + 20, y1 + 34), { key: key + ':sillS', color: 'shadow', alpha: 0.3 * al, w: 8, gap: 5, angle: 0.05, p: pd, still: true });
+    stroke(ctx, sill, { key: key + ':sill', closed: true, w: 2.2, alpha: al, p: pd });
     if (o.frost) {
       const r = P.staticRng(key + ':fr');
       for (let i = 0; i < 9; i++) {
         const cx = x0 + 40 + r() * (x1 - x0 - 80), cy = y0 + 40 + r() * (y1 - y0 - 80), s = 7 + r() * 9;
-        for (let j = 0; j < 3; j++) { const a = j * Math.PI / 3 + r(); stroke(ctx, [[cx - Math.cos(a) * s, cy - Math.sin(a) * s], [cx + Math.cos(a) * s, cy + Math.sin(a) * s]], { key: key + ':sf' + i + j, color: 'guide', w: 1.6, alpha: al * pd * 0.9, sketch: false, gaps: false }); }
+        for (let j = 0; j < 3; j++) { const a = j * Math.PI / 3 + r(); stroke(L.light, [[cx - Math.cos(a) * s, cy - Math.sin(a) * s], [cx + Math.cos(a) * s, cy + Math.sin(a) * s]], { key: key + ':sf' + i + j, color: 'light', w: 2.2, alpha: al * pd, sketch: false, gaps: false }); }
       }
-      hatch(ctx, [[x0 + in0, y1 - in0], [x0 + in0, y1 - 90], [x0 + 110, y1 - in0]], { key: key + ':frH', color: 'guide', alpha: 0.35 * al, p: pd, gap: 4, angle: 0.8 });
-      hatch(ctx, [[x1 - in0, y1 - in0], [x1 - in0, y1 - 80], [x1 - 100, y1 - in0]], { key: key + ':frH2', color: 'guide', alpha: 0.35 * al, p: pd, gap: 4, angle: -0.8 });
     }
     if (o.curtains) {
       for (const sd of [-1, 1]) {
         const cx = sd < 0 ? x0 - 30 : x1 + 30;
         const pts = []; for (let i = 0; i <= 12; i++) pts.push([cx + Math.sin(i * 1.3) * 10 * sd, y0 - 30 + i * (y1 - y0 + 50) / 12]);
-        stroke(ctx, pts, { key: key + ':cu' + sd, color: 'a1', w: 2.2, alpha: al, p: pd });
-        stroke(ctx, pts.map(([x, y]) => [x - sd * 38, y]), { key: key + ':cu2' + sd, color: 'a1', w: 2, alpha: al * 0.8, p: pd });
-        hatch(ctx, pts.concat(pts.map(([x, y]) => [x - sd * 38, y]).reverse()), { key: key + ':cuH' + sd, color: 'a1', alpha: 0.3 * al, p: pd, gap: 6, angle: -1.3 });
+        const other = pts.map(([x, y]) => [x - sd * 42, y]);
+        const poly = pts.concat(other.slice().reverse());
+        knock(ctx, [poly], al * pd);
+        P.volume(P.polyShape(poly, { round: 0.9 }), { key: key + ':cuV' + sd, color: 'a1', alpha: al, p: pd, w: 0.55 });
+        for (let f = 1; f < 3; f++) stroke(ctx, pts.map(([x, y]) => [x - sd * 14 * f, y]), { key: key + ':cuf' + sd + f, w: 1.2, alpha: al * 0.4 * pd, sketch: false });
+        stroke(ctx, pts, { key: key + ':cu' + sd, w: 2.2, alpha: al, p: pd });
+        stroke(ctx, other, { key: key + ':cu2' + sd, w: 2, alpha: al * 0.8, p: pd });
       }
-      stroke(ctx, [[x0 - 90, y0 - 34], [x1 + 90, y0 - 34]], { key: key + ':rod', w: 2.6, alpha: al, p: pd });
+      stroke(ctx, [[x0 - 90, y0 - 34], [x1 + 90, y0 - 34]], { key: key + ':rod', w: 3, alpha: al, p: pd });
     }
     if (o.plant) {
       const px = x0 + 70, py = y1 + 4;
       const pot = [[px - 30, py - 50], [px + 30, py - 50], [px + 22, py], [px - 22, py]];
-      knock(ctx, [pot], al * pd);
-      hatch(ctx, pot, { key: key + ':potH', color: 'fur', alpha: 0.55 * al, p: pd, gap: 4 });
-      stroke(ctx, pot, { key: key + ':pot', closed: true, w: 2.2, alpha: al, p: pd });
       [[-26, -110], [-6, -140], [18, -118], [30, -86], [-36, -78]].forEach(([dx, dy], i) => {
         const tip = [px + dx, py - 50 + dy * 0.9];
         const leaf = curve([[px, py - 50], [lerp(px, tip[0], 0.5) - 10, lerp(py - 50, tip[1], 0.5)], tip, [lerp(px, tip[0], 0.5) + 10, lerp(py - 50, tip[1], 0.5) + 6], [px, py - 50]], false, 4);
-        hatch(ctx, leaf, { key: key + ':lfH' + i, color: 'a2', alpha: 0.6 * al, p: pd, gap: 3.5, angle: 0.6 });
+        knock(ctx, [leaf], al * pd);
+        P.volume(P.polyShape(leaf, { round: 0.8 }), { key: key + ':lfV' + i, color: 'a2', alpha: al, p: pd, w: 0.35, noCore: true });
         stroke(ctx, leaf, { key: key + ':lf' + i, color: 'line', w: 1.8, alpha: al, p: pd });
       });
+      knock(ctx, [pot], al * pd);
+      P.volume(P.polyShape(pot), { key: key + ':potV', color: 'fur:dk', alpha: al, p: pd, w: 0.5 });
+      stroke(ctx, pot, { key: key + ':pot', closed: true, w: 2.2, alpha: al, p: pd });
     }
   }
   function drawCarpet(ctx, key, x0, y0, x1, y1, p, al) {
     if (al <= 0.004 || p <= 0) return;
+    const L = P.L;
     const rect = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+    P.crayon(L.color, P.rectShape(x0 + 8, y1 + 4, x1 + 12, y1 + 22), { key: key + ':sh', color: 'shadow', alpha: 0.3 * al, w: 9, gap: 5, angle: 0.05, p, still: true });
     knock(ctx, [rect], al * clamp(p * 3));
     const pa = seg(p, 0, 0.5), pb = seg(p, 0.3, 1);
     const b = 30;
-    hatch(ctx, [rect, [[x0 + b, y0 + b], [x1 - b, y0 + b], [x1 - b, y1 - b], [x0 + b, y1 - b]]], { key: key + ':bh', color: 'fur', alpha: 0.5 * al, p: pb, gap: 4, angle: -0.8 });
+    P.volume(P.polyShape(rect, { normal: [0, 0, 1] }), { key: key + ':V', color: 'warm', alpha: al, p: pb, w: 0.9, still: true, noCore: true, noLight: true });
+    P.crayon(L.color, P.polyShape([[x0 + b, y0 + b], [x1 - b, y0 + b], [x1 - b, y1 - b], [x0 + b, y1 - b]]), { key: key + ':in', color: 'warm:dk', alpha: 0.35 * al, w: 9, gap: 7, angle: 0.5, p: pb, still: true });
     stroke(ctx, rect, { key: key + ':o', closed: true, w: 2.6, alpha: al, p: pa });
     stroke(ctx, [[x0 + b, y0 + b], [x1 - b, y0 + b], [x1 - b, y1 - b], [x0 + b, y1 - b]], { key: key + ':i', closed: true, w: 2, alpha: al, p: pa });
-    // ромбы
     const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-    [[1, 'a1', 0.5], [0.62, 'a2', 0.55], [0.3, 'fur', 0.7]].forEach(([sc, c, a], i) => {
+    [[1, 'a1', L.color], [0.62, 'cream', L.light], [0.3, 'fur', L.color]].forEach(([sc, c, lay], i) => {
       const rw = (x1 - x0 - b * 2) / 2 * sc * 0.92, rh = (y1 - y0 - b * 2) / 2 * sc * 0.92;
       const dm = [[cx, cy - rh], [cx + rw, cy], [cx, cy + rh], [cx - rw, cy]];
-      hatch(ctx, dm, { key: key + ':dh' + i, color: c, alpha: a * 0.6 * al, p: pb, gap: 5, angle: i % 2 ? 0.8 : -0.8 });
+      knock(ctx, [dm], al * pb * 0.6);
+      P.crayon(lay, P.polyShape(dm), { key: key + ':dh' + i, color: c, alpha: 0.6 * al, w: 8, gap: 6, angle: i % 2 ? 0.8 : -0.8, p: pb, still: true });
       stroke(ctx, dm, { key: key + ':d' + i, closed: true, w: 2, alpha: al, p: pb });
     });
-    // бахрома
     for (let x = x0 + 8; x < x1; x += 14) {
       stroke(ctx, [[x, y1], [x + 1, y1 + 16]], { key: key + ':fb' + x, w: 1.3, alpha: al * 0.7 * pb, sketch: false, gaps: false });
       stroke(ctx, [[x, y0], [x - 1, y0 - 14]], { key: key + ':ft' + x, w: 1.3, alpha: al * 0.7 * pb, sketch: false, gaps: false });
@@ -870,10 +1013,10 @@
     if (al <= 0.004 || p <= 0) return;
     for (let x = 70, i = 0; x < 1880; x += 76, i++) {
       if (skip && x > skip[0] && x < skip[1]) continue;
-      stroke(ctx, [[x, 60], [x + 2, GROUND - 26]], { key: key + ':wp' + i, color: 'soft', w: 1.2, alpha: al * 0.18, p: seg(p, i / 40, 1), sketch: false });
+      stroke(P.L.color, [[x, 60], [x + 2, GROUND - 26]], { key: key + ':wp' + i, color: 'wallB:sh', w: 4, alpha: al * 0.3, p: seg(p, i / 40, 1), sketch: false });
       for (let y = 120; y < GROUND - 60; y += 130) {
         const yy = y + (i % 2) * 65;
-        stroke(ctx, ellipsePts(x + 38, yy, 5, 5, 0, key + i + 'f' + y), { key: key + ':wf' + i + '_' + y, closed: true, color: 'soft', w: 1.2, alpha: al * 0.22 * p, sketch: false, gaps: false });
+        P.crayon(P.L.light, P.ellShape(x + 38, yy, 4.5, 4.5), { key: key + ':wf' + i + '_' + y, color: 'wallB:lt', alpha: 0.45 * al * p, w: 3.5, gap: 3, still: true });
       }
     }
   }
@@ -881,12 +1024,11 @@
     if (al <= 0.004 || p <= 0) return;
     const poly = ellipsePoly(c[0], c[1], r, r, 0, 20);
     knock(ctx, [poly], al * p);
-    hatch(ctx, poly, { key: key + ':yH', color: 'a2', alpha: 0.55 * al, p, gap: 3.5, angle: 0.4 });
+    P.volume(P.ellShape(c[0], c[1], r, r), { key: key + ':yV', color: 'a2', alpha: al * p, w: 0.4, shine: 0.9 });
     stroke(ctx, ellipsePts(c[0], c[1], r, r, 0, key + 'y'), { key: key + ':y', closed: true, w: 2.2, alpha: al, p });
-    for (let i = 0; i < 3; i++) stroke(ctx, arcPts(c[0] + (i - 1) * r * 0.3, c[1], r * 0.7, r * 0.95, -1.2 + i * 0.2, 1.4 + i * 0.2, 8), { key: key + ':ya' + i, color: 'a2', w: 1.6, alpha: al * p, sketch: false });
-    // спицы
-    stroke(ctx, [[c[0] - r * 1.4, c[1] - r * 1.5], [c[0] + r * 0.4, c[1] + r * 0.2]], { key: key + ':n1', w: 2, alpha: al * p, sketch: false });
-    stroke(ctx, [[c[0] + r * 1.3, c[1] - r * 1.6], [c[0] - r * 0.2, c[1] + r * 0.1]], { key: key + ':n2', w: 2, alpha: al * p, sketch: false });
+    for (let i = 0; i < 3; i++) stroke(ctx, arcPts(c[0] + (i - 1) * r * 0.3, c[1], r * 0.7, r * 0.95, -1.2 + i * 0.2, 1.4 + i * 0.2, 8), { key: key + ':ya' + i, color: 'a2:dk', w: 1.6, alpha: al * p, sketch: false });
+    stroke(ctx, [[c[0] - r * 1.4, c[1] - r * 1.5], [c[0] + r * 0.4, c[1] + r * 0.2]], { key: key + ':n1', w: 2.2, alpha: al * p, sketch: false });
+    stroke(ctx, [[c[0] + r * 1.3, c[1] - r * 1.6], [c[0] - r * 0.2, c[1] + r * 0.1]], { key: key + ':n2', w: 2.2, alpha: al * p, sketch: false });
   }
 
   // ---- картонная коробка «игрушки»
@@ -894,7 +1036,6 @@
   function boxGeo(bx, lid, open) {
     const G = GROUND, w = BOXD.w, h = BOXD.h, dx = BOXD.dx, dy = BOXD.dy;
     const fl = [bx - w / 2, G - h], fr = [bx + w / 2, G - h], bl = [bx - w / 2 + dx, G - h + dy], br = [bx + w / 2 + dx, G - h + dy];
-    // клапаны: lid = 1 закрыт, 0 открыт; open > 1 — распахнуты сильнее
     const L = (a, b, k) => lerp(a, b, k);
     const ff = [L(-22, 19, lid) - open * 20, L(-82, -22, lid) + open * 10];
     const bf = [L(10, -19, lid), L(-86, 22, lid) - open * 10];
@@ -906,68 +1047,82 @@
       side: [fr, br, [br[0], G + dy], [bx + w / 2, G]],
       top: [fl, fr, br, bl],
       flapF: quad(fl, fr, ff), flapB: quad(bl, br, bf), flapL: quad(fl, bl, lf), flapR: quad(fr, br, rf),
-      center: [bx + dx / 2, G - h + dy / 2], mid: [bx + dx / 2, G - h / 2],
+      center: [bx + dx / 2, G - h + dy / 2], mid: [bx + dx / 2, G - h / 2], bx,
     };
+  }
+  const FLAPN = { flapF: [0, -0.7, 0.8], flapB: [0, -0.4, 1], flapL: [-0.7, -0.4, 0.6], flapR: [0.7, -0.4, 0.6] };
+  function drawFlap(ctx, key, g, f, p, al) {
+    knock(ctx, [g[f]], al * clamp(p * 3));
+    P.volume(P.polyShape(g[f], { normal: FLAPN[f] }), { key: key + ':' + f + 'V', color: 'cardboard', alpha: al, p, w: 0.6, noCore: true });
+    stroke(ctx, g[f], { key: key + ':' + f, closed: true, w: 2.2, alpha: al, p });
   }
   function drawBoxBack(ctx, key, g, p, al, lid) {
     if (al <= 0.004 || p <= 0) return;
+    P.castShadow(g.bx + 30, GROUND, 170, 22, { key: key + ':cast', alpha: al * p, h: 120 });
     if (lid < 0.5) {
-      hatch(ctx, g.top, { key: key + ':inH', color: 'line', alpha: 0.45 * al, p, gap: 4, angle: -0.6 });
-      for (const f of ['flapB', 'flapL']) {
-        hatch(ctx, g[f], { key: key + ':' + f + 'H', color: 'fur', alpha: 0.35 * al, p, gap: 5 });
-        stroke(ctx, g[f], { key: key + ':' + f, closed: true, w: 2.2, alpha: al, p });
-      }
+      P.crayon(P.L.color, P.polyShape(g.top), { key: key + ':inC', color: 'shadow', alpha: 0.6 * al, w: 9, gap: 5, angle: -0.6, p });
+      hatch(ctx, g.top, { key: key + ':inH', color: 'line', alpha: 0.35 * al, p, gap: 4, angle: 0.6 });
+      for (const f of ['flapB', 'flapL']) drawFlap(ctx, key, g, f, p, al);
     }
   }
   function drawBoxFront(ctx, key, g, p, al, lid, label) {
     if (al <= 0.004 || p <= 0) return;
-    const parts = [g.front, g.side];
-    knock(ctx, parts, al * clamp(p * 3));
-    hatch(ctx, g.front, { key: key + ':fH', color: 'fur', alpha: 0.38 * al, p, gap: 6, angle: -0.95 });
-    hatch(ctx, g.side, { key: key + ':sH', color: 'soft', alpha: 0.45 * al, p, gap: 4.5, angle: 0.7 });
+    knock(ctx, [g.front, g.side], al * clamp(p * 3));
+    P.volume(P.polyShape(g.front, { normal: [0, 0, 1] }), { key: key + ':fV', color: 'cardboard', alpha: al, p, w: 0.9, noCore: true });
+    P.volume(P.polyShape(g.side, { normal: [0.85, 0, 0.5] }), { key: key + ':sV', color: 'cardboard', alpha: al, p, w: 0.8 });
     stroke(ctx, g.front, { key: key + ':f', closed: true, w: 2.6, alpha: al, p });
     stroke(ctx, g.side, { key: key + ':s', closed: true, w: 2.4, alpha: al, p });
+    // скотч
+    stroke(P.L.light, [[g.front[1][0] + 100, g.front[1][1]], [g.front[1][0] + 100, g.front[1][1] + 46]], { key: key + ':tape', color: 'cream', w: 14, alpha: al * 0.7 * p, sketch: false });
     const flaps = lid < 0.5 ? ['flapR', 'flapF'] : ['flapL', 'flapR', 'flapB', 'flapF'];
-    for (const f of flaps) {
-      knock(ctx, [g[f]], al * clamp(p * 3));
-      hatch(ctx, g[f], { key: key + ':' + f + 'H2', color: 'fur', alpha: 0.4 * al, p, gap: 5, angle: 0.4 });
-      stroke(ctx, g[f], { key: key + ':' + f + '2', closed: true, w: 2.2, alpha: al, p });
-    }
+    for (const f of flaps) drawFlap(ctx, key + '2', g, f, p, al);
     if (label) write(ctx, 'игрушки', g.front[0][0] + 34, g.front[0][1] - 62, { key: key + ':lbl', size: 46, alpha: al * label, p: label, rot: -0.04 });
   }
 
   // ---- чердак
   function drawAttic(ctx, key, p, al) {
     if (al <= 0.004 || p <= 0) return;
+    const L = P.L;
     const pa = seg(p, 0, 0.6), pb = seg(p, 0.3, 1);
+    const st = { still: true, world: true, p: pa, step: 7, jitter: 14 };
+    // стены под крышей и пол — холодный тёмный мелок
+    P.crayon(L.color, P.polyShape([[-160, 1040], [960, 36], [2080, 1040]]), Object.assign({}, st, { key: key + ':w', color: 'wallA:sh', alpha: 0.42 * al, w: 18, gap: 11, angle: -0.4, maxLen: 200 }));
+    P.crayon(L.color, P.rectShape(-200, GROUND, 2120, 1300), Object.assign({}, st, { key: key + ':fl', color: 'floor:sh', alpha: 0.5 * al, w: 16, gap: 10, angle: 0.02, maxLen: 260 }));
+    // балки — дерево с объёмом
+    const beams = [[[-160, 1040], [960, 36], [960, 110], [-60, 1040]], [[960, 36], [2080, 1040], [1980, 1040], [960, 110]]];
+    beams.forEach((bm, i) => P.volume(P.polyShape(bm, { normal: [i ? -0.4 : 0.4, 0.3, 1] }), { key: key + ':rb' + i, color: 'floor', alpha: al, p: pa, still: true, w: 0.7, noLight: true }));
+    P.volume(P.rectShape(410, 520, 1510, 552, [0, -0.3, 1]), { key: key + ':beamV', color: 'floor', alpha: al, p: pb, still: true, w: 0.6 });
+    P.volume(P.rectShape(960, 120, 990, GROUND, [0.2, 0, 1]), { key: key + ':postV', color: 'floor', alpha: al, p: pb, still: true, w: 0.6 });
     stroke(ctx, [[-160, 1040], [960, 36], [2080, 1040]], { key: key + ':roof', w: 3, alpha: al, p: pa });
     stroke(ctx, [[-60, 1040], [960, 120], [1980, 1040]], { key: key + ':roof2', w: 2.4, alpha: al, p: pa });
     stroke(ctx, [[420, 520], [1500, 520]], { key: key + ':beam', w: 2.6, alpha: al, p: pb });
     stroke(ctx, [[410, 552], [1510, 552]], { key: key + ':beam2', w: 2.2, alpha: al, p: pb });
-    hatch(ctx, [[420, 520], [1500, 520], [1510, 552], [410, 552]], { key: key + ':beamH', color: 'soft', alpha: 0.5 * al, p: pb, gap: 4, angle: 0.2 });
     stroke(ctx, [[960, 120], [960, GROUND]], { key: key + ':post', w: 2.4, alpha: al, p: pb });
     stroke(ctx, [[990, 140], [990, GROUND]], { key: key + ':post2', w: 2, alpha: al, p: pb });
     stroke(ctx, [[100, GROUND], [1820, GROUND + 2]], { key: key + ':fl', w: 2.6, alpha: al, p: pa });
     for (let i = 0; i < 10; i++) { const x = 160 + i * 180; stroke(ctx, [[x, GROUND + 4], [x + (x - 960) * 0.5, 1110]], { key: key + ':fb' + i, w: 1.4, alpha: al * 0.4, p: pb, sketch: false }); }
-    // круглое окно
+    // круглое окно с луной
     const wc = [1300, 330];
+    P.crayon(L.color, P.ellShape(wc[0], wc[1], 66, 66), { key: key + ':glass', color: 'night', alpha: 0.55 * al, w: 10, gap: 6, angle: -0.5, p: pb, still: true });
+    P.crayon(L.light, P.ellShape(wc[0] + 22, wc[1] - 24, 20, 20), { key: key + ':moonL', color: 'light', alpha: 0.9 * al, w: 6, gap: 4, angle: 0.3, p: pb, still: true, cond: (n, x, y) => Math.hypot(x - wc[0] - 30, y - wc[1] + 32) > 16 });
     stroke(ctx, ellipsePts(wc[0], wc[1], 80, 80, 0, key + 'w'), { key: key + ':w', closed: true, w: 2.8, alpha: al, p: pa });
     stroke(ctx, ellipsePts(wc[0], wc[1], 66, 66, 0, key + 'w2'), { key: key + ':w2', closed: true, w: 2, alpha: al, p: pa });
     stroke(ctx, [[wc[0] - 66, wc[1]], [wc[0] + 66, wc[1]]], { key: key + ':wx', w: 2, alpha: al, p: pb });
     stroke(ctx, [[wc[0], wc[1] - 66], [wc[0], wc[1] + 66]], { key: key + ':wy', w: 2, alpha: al, p: pb });
-    // луна
-    stroke(ctx, arcPts(wc[0] + 22, wc[1] - 24, 20, 20, 1.2, 5.1, 12), { key: key + ':moon', color: 'line', w: 2, alpha: al * pb });
-    // паутина в углу у балки
+    // лунный луч
+    P.crayon(L.light, P.polyShape([[1250, 280], [1360, 380], [1090, GROUND + 10], [700, GROUND + 10]]), { key: key + ':beamL', color: 'guide', alpha: 0.22 * al, w: 14, gap: 10, angle: -1.15, p: pb, still: true, world: true, maxLen: 140 });
+    // паутина
     const cw = [560, 552];
-    for (let i = 0; i < 5; i++) { const a = 0.15 + i * 0.32; stroke(ctx, [cw, [cw[0] + Math.cos(a) * 120, cw[1] + Math.sin(a) * 120]], { key: key + ':cw' + i, w: 1.2, alpha: al * 0.7 * pb, sketch: false }); }
-    for (let j = 1; j <= 3; j++) stroke(ctx, arcPts(cw[0], cw[1], j * 36, j * 36, 0.15, 1.45, 10), { key: key + ':cwa' + j, w: 1.1, alpha: al * 0.6 * pb, sketch: false });
+    for (let i = 0; i < 5; i++) { const a = 0.15 + i * 0.32; stroke(L.light, [cw, [cw[0] + Math.cos(a) * 120, cw[1] + Math.sin(a) * 120]], { key: key + ':cw' + i, color: 'light', w: 1.4, alpha: al * 0.7 * pb, sketch: false }); }
+    for (let j = 1; j <= 3; j++) stroke(L.light, arcPts(cw[0], cw[1], j * 36, j * 36, 0.15, 1.45, 10), { key: key + ':cwa' + j, color: 'light', w: 1.2, alpha: al * 0.6 * pb, sketch: false });
     // старый чемодан
     const sx = 330, sy = GROUND;
     const suit = [[sx - 110, sy], [sx - 110, sy - 120], [sx + 110, sy - 120], [sx + 110, sy]];
+    P.castShadow(sx + 20, sy, 140, 18, { key: key + ':scast', alpha: al * pb, h: 80 });
     knock(ctx, [suit], al * pb);
-    hatch(ctx, suit, { key: key + ':suH', color: 'soft', alpha: 0.4 * al, p: pb, gap: 5 });
+    P.volume(P.polyShape(suit, { round: 0.5, vy: (f) => lerp(-0.4, 0.3, f) }), { key: key + ':suV', color: 'warm:dk', alpha: al, p: pb, still: true, w: 0.8 });
     stroke(ctx, suit, { key: key + ':su', closed: true, w: 2.6, alpha: al, p: pb });
-    stroke(ctx, curve([[sx - 30, sy - 120], [sx - 26, sy - 146], [sx + 26, sy - 146], [sx + 30, sy - 120]], false, 5), { key: key + ':suh', w: 2.4, alpha: al, p: pb });
+    stroke(ctx, curve([[sx - 30, sy - 120], [sx - 26, sy - 146], [sx + 26, sy - 146], [sx + 30, sy - 120]], false, 5), { key: key + ':suh', w: 2.6, alpha: al, p: pb });
     stroke(ctx, [[sx - 110, sy - 60], [sx + 110, sy - 58]], { key: key + ':sub', w: 1.8, alpha: al * 0.7, p: pb });
   }
 
@@ -1012,7 +1167,7 @@
     // мишка: под ёлкой → на руках
     const floorC = bearCenter(560, GROUND, BS);
     const bc = h > 0 ? arc2(floorC, g.hugC, h, 50) : floorC;
-    const bear = { x: bc[0], y: bc[1] - BEAR_CY * BS, s: BS, rot: h * 0.06, key: 'bear', draw: seg(t, T.bearDraw[0], T.bearDraw[1]), fur: seg(t, T.fur0[0], T.fur0[1]), marks: { button: seg(t, T.button[0], T.button[1]) } };
+    const bear = { x: bc[0], y: bc[1] - BEAR_CY * BS, s: BS, rot: h * 0.06, key: 'bear', ground: GROUND, shadowA: 1 - clamp(h * 3), draw: seg(t, T.bearDraw[0], T.bearDraw[1]), fur: seg(t, T.fur0[0], T.fur0[1]), marks: { button: seg(t, T.button[0], T.button[1]) } };
     const restHands = g.rest;
     const reachHands = { l: [floorC[0] + 60, floorC[1] - 10], r: [floorC[0] + 20, floorC[1] + 20] };
     const hh = hugHands(bc, BS);
@@ -1026,6 +1181,8 @@
     P.camera(ctx, cam);
     const oth = erase(t, T.exit1[0], T.exit1[0] + 0.6);
     const treeA = oth * erase(t, T.treeOut[0], T.treeOut[1]);
+    P.light = { x: 995, y: 330, z: 650 };
+    drawRoom('s1r', 'wallA', seg(t, T.floor1[0], T.floor1[1]), oth, { window: [860, 250, 1130, 590] });
     drawFloor(ctx, 's1', seg(t, T.floor1[0], T.floor1[1]), oth);
     drawWindow(ctx, 's1w', 860, 250, 1130, 590, seg(t, T.window1[0], T.window1[1]), oth, { frost: true });
     drawDoor(ctx, 's1d', seg(t, T.door1[0], T.door1[1]), oth);
@@ -1091,6 +1248,8 @@
     P.camera(ctx, cam);
     const oth = erase(t, T.exit2[0], T.exit2[0] + 0.45);
     const rp = seg(t, T.room2[0], T.room2[1]);
+    P.light = { x: 380, y: -150, z: 900 };
+    drawRoom('s2r', 'wallB', rp, oth);
     drawWallpaper(ctx, 's2wp', rp, oth, [130, 740]);
     drawFloor(ctx, 's2', rp, oth);
     drawCarpet(ctx, 's2c', 150, 330, 720, 700, rp, oth);
@@ -1141,6 +1300,7 @@
       [T.pull3[1], T.TURN - T.pull3[1], { x: 930, y: 610, z: 1.1 }],
       [T.TURN + 0.05, T.rise[1] - T.TURN - 0.05, focus(bc, BS, CUT)]]);
     P.camera(ctx, cam);
+    P.light = turn ? { x: box.center[0], y: box.center[1] + 20, z: 240 } : { x: 1300, y: 330, z: 320 };
     const dark = seg(t, T.s3, T.s3 + 0.8) * (1 - seg(t, T.TURN, T.TURN + 0.35));
     POST.night = dark;
     drawAttic(ctx, 'att', seg(t, T.attic[0], T.attic[1]), 1);
@@ -1218,6 +1378,8 @@
     P.camera(ctx, cam);
     const oth = erase(t, T.exit4[0], T.exit4[0] + 0.6);
     const rp = seg(t, T.room4[0], T.room4[1]);
+    P.light = { x: 900, y: 360, z: 650 };
+    drawRoom('s4r', 'wallC', rp, oth, { window: [760, 240, 1040, 570] });
     drawFloor(ctx, 's4', rp, oth);
     drawWindow(ctx, 's4w', 760, 240, 1040, 570, rp, oth, { sun: true, curtains: true, plant: true });
     drawDoor(ctx, 's4d', rp, oth);
@@ -1259,7 +1421,7 @@
     const bs = lerp(BS, POSTER.s, tp);
     if (tp > 0) bc = lerp2(bc, posterC, tp);
     const clipP = seg(t, T.clip[0], T.clip[1]);
-    const bear = { x: bc[0], y: bc[1] - BEAR_CY * bs, s: bs, rot: hg * 0.05 * (1 - tp), key: 'bear', marks: { button: 1, patch: 1, scarf: 1, clip: clipP >= 1 ? 1 : 0 } };
+    const bear = { x: bc[0], y: bc[1] - BEAR_CY * bs, s: bs, rot: hg * 0.05 * (1 - tp), key: 'bear', ground: POSTER.y, shadowA: seg(tp, 0.6, 1), marks: { button: 1, patch: 1, scarf: 1, clip: clipP >= 1 ? 1 : 0 } };
     // руки
     const pHold = 1 - seg(t, T.give5[0] + 0.45, T.give5[1] + 0.1);
     const fol = sideHands(bc, BS, 6);
@@ -1287,6 +1449,8 @@
     POST.warmC = [(gS.X + bc[0]) / 2, gS.hugC[1]];
     const oth = erase(t, T.erase5[0], T.erase5[0] + 0.9);
     const rp = seg(t, T.room5[0], T.room5[1]);
+    P.light = { x: lerp(710, 260, tp), y: lerp(360, 60, tp), z: lerp(650, 900, tp) };
+    drawRoom('s5r', 'wallD', rp, oth, { window: [560, 230, 860, 560] });
     drawFloor(ctx, 's5', rp, oth);
     drawWindow(ctx, 's5w', 560, 230, 860, 560, rp, oth, { sun: true, curtains: true, plant: true });
     drawDoor(ctx, 's5d', rp, oth);
@@ -1358,12 +1522,11 @@
   // =====================================================================
   // КАДР
   // =====================================================================
-  let ink = null, inkCtx = null;
   function renderFrame(main, tRaw) {
     // «на двойках»: рисунок меняется 12 раз в секунду
     const t = Math.floor(tRaw * P.DRAW_FPS + 1e-6) / P.DRAW_FPS;
-    if (!ink) { ink = P.makeCanvas(W, H); inkCtx = ink.getContext('2d'); }
-    P.begin(t, inkCtx);
+    P.RS = main.canvas.width / W;
+    const inkCtx = P.begin(t);
     P.fade = t < T.TURN ? 1 : 1 - seg(t, T.TURN, T.TURN + 0.6);
     POST.night = 0; POST.flash = 0; POST.warm = t >= T.warm[0] ? 1 : 0;
     if (t < T.s2) scene1(inkCtx, t);
@@ -1371,11 +1534,11 @@
     else if (t < T.s4) scene3(inkCtx, t);
     else if (t < T.s5) scene4(inkCtx, t);
     else scene5(inkCtx, Math.min(t, T.END));
-    P.compose(main, inkCtx);
+    P.compose(main);
     post(main, t);
   }
   function post(main, t) {
-    main.setTransform(1, 0, 0, 1, 0, 0);
+    main.setTransform(P.RS, 0, 0, P.RS, 0, 0);
     if (POST.night > 0.01) {
       main.globalCompositeOperation = 'multiply';
       const gr = main.createRadialGradient(1300, 330, 60, 1100, 600, 1300);
