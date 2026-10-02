@@ -70,6 +70,9 @@ export const IMPACTS = [{ s: HIT.t, x: DROP_SPOT[0] + HIT.x, z: DROP_SPOT[1], po
 // (натрий, контровой), neon — розово-голубая вывеска сбоку, car — фары, lightning — молния
 // ---------------------------------------------------------------------
 const LIGHT0 = () => ({ window: 1, lamp: 1, neon: 0.6, env: 0.35, lightning: 0 });
+// вспышки молнии [начало, затухание, яркость] и провалы неона [начало, длительность] — общие для картинки и звука
+export const LIGHTNING = [[0.45, 0.05, 1], [0.56, 0.04, 0.6], [1.7, 0.12, 0.85]];
+export const NEON_FLICKER = [[19.25, 0.06], [19.4, 0.03], [19.95, 0.12], [20.2, 0.04], [20.27, 0.05], [20.7, 0.08]];
 const ORDER = Object.entries(SHOTS5).sort((a, b) => a[1] - b[1]);
 export function shotAt5(t) { let s = ORDER[0][0]; for (const [n, t0] of ORDER) if (t >= t0) s = n; return s; }
 
@@ -115,7 +118,7 @@ const SHOT_FN = {
     S.cam = { pos: mix3([4.4, 0.42, 3.9], [3.6, 0.46, 3.2], k), target: [0.05, 0.42, 0], fov: 30, roll: 0.015, fstop: 2.0, focus: null };
     S.fade = 1 - smooth(seg(t, 0, 0.5));
     const L = (t0, d, a) => (t >= t0 ? a * Math.exp(-(t - t0) / d) : 0);
-    S.light = { window: smooth(seg(t, 1.9, 3)), lamp: 0.25 + 0.75 * smooth(seg(t, 1.2, 2.6)), neon: 0.35 * smooth(seg(t, 2.2, 3)), env: lerp(0.08, 0.3, seg(t, 0.5, 3)), lightning: L(0.45, 0.05, 1) + L(0.56, 0.04, 0.6) + L(1.7, 0.12, 0.85) };
+    S.light = { window: smooth(seg(t, 1.9, 3)), lamp: 0.25 + 0.75 * smooth(seg(t, 1.2, 2.6)), neon: 0.35 * smooth(seg(t, 2.2, 3)), env: lerp(0.08, 0.3, seg(t, 0.5, 3)), lightning: LIGHTNING.reduce((a, [t0, d, b]) => a + L(t0, d, b), 0) };
   },
   // ---- 3–5: макро — капли на трикотаже, фокус переводится с ближних на дальние
   drops(t, S) {
@@ -177,8 +180,7 @@ const SHOT_FN = {
     S.cam = { pos: mix3([6.6, 0.75, 0.4], [4.6, 0.66, 0.25], k), target: [0, 0.48, 0], fov: 26, roll: 0, fstop: 2.8, focus: null };
     S.cam.focus = dist3(S.cam.pos, [1.15, 0.42, 0]); // резкость — на носке
     // мигание: короткие провалы, как у старой трубки
-    const fl = [[19.25, 0.06], [19.4, 0.03], [19.95, 0.12], [20.2, 0.04], [20.27, 0.05], [20.7, 0.08]];
-    let on = 1; for (const [a, d] of fl) if (t >= a && t < a + d) on = 0.08;
+    let on = 1; for (const [a, d] of NEON_FLICKER) if (t >= a && t < a + d) on = 0.08;
     S.light.neon = 1.6 * on; S.light.window = 0.45; S.light.lamp = 0.8;
   },
   // ---- 21–23: три расцветки в ряд; тележка вдоль ряда, фокус бежит по кроссовкам

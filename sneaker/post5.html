@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>Пост-продакшн v5</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400..800&family=Unbounded:wght@400..800&display=swap">
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }</script>
+<style>
+  html, body { margin: 0; background: transparent; }
+  #card { display: block; width: 1920px; height: 1080px; }
+</style>
+</head><body>
+<!-- Пост-продакшн v5: звук (audio5.js) и финальная карточка (card5.js) для сборки с кадрами Cycles -->
+<svg id="card" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg"></svg>
+<script type="module">
+  import { createCard, CARD_IN } from './js/card5.js';
+  import { renderTrack5, toWav, LENGTH5 } from './js/audio5.js';
+  await Promise.all(['600 36px Unbounded', '800 104px Unbounded', '600 42px Manrope'].map((f) => document.fonts.load(f, 'ORBITA PULSE Отрывайся'))).catch(() => {});
+  const card = createCard(document.getElementById('card'));
+  card.update(0);
+  window.__post = {
+    length: LENGTH5, cardIn: CARD_IN,
+    card: (t) => { card.update(t); return true; },
+    wav: async () => {
+      const bytes = new Uint8Array(toWav(await renderTrack5(48000)));
+      let s = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      return btoa(s);
+    },
+    ready: true,
+  };
+</script>
+</body></html>
