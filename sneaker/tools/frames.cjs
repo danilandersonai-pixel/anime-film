@@ -13,7 +13,7 @@ const { openPage } = require('./serve.cjs');
     const t0 = Date.now();
     await page.evaluate((x) => window.__ad.render(x), t);
     const f = path.join(out, `f${String(i).padStart(2, '0')}_${t.toFixed(2)}.png`);
-    await stage.screenshot({ path: f });
+    await stage.screenshot({ path: f, timeout: 180000 });
     files.push(f);
     console.log(`t=${t.toFixed(2)}  ${Date.now() - t0} мс`);
   }

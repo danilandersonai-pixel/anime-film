@@ -215,15 +215,31 @@ function patch(nu, nv, sOf, tOf, off, uvOf) {
   });
 }
 
+// пена пропускает немного света: к краям (под скользящим взглядом) и в тенях
+// она светится изнутри своим цветом. Сила задаётся из main.js по яркости сцены.
+function translucent(m) {
+  m.userData.sss = { value: new THREE.Color('#ffffff') };
+  m.userData.sssAmt = { value: 0.05 };
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.sssColor = m.userData.sss; sh.uniforms.sssAmt = m.userData.sssAmt;
+    sh.fragmentShader = 'uniform vec3 sssColor; uniform float sssAmt;\n' + sh.fragmentShader.replace('#include <emissivemap_fragment>',
+      '#include <emissivemap_fragment>\n  { float rim = 1.0 - saturate(dot(normal, normalize(vViewPosition))); totalEmissiveRadiance += sssColor * sssAmt * (0.35 + 1.4 * rim * rim); }');
+  };
+  m.customProgramCacheKey = () => 'foam-sss';
+}
+
 // плоская лента вдоль кривой (шнурки, петля на пятке)
-function ribbon(points, width, thick, upHint = [0, 1, 0], { tubular = 120, radial = 10, closed = false } = {}) {
+function ribbon(points, width, thick, upHint = [0, 1, 0], { tubular = 120, radial = 10, closed = false, twist = 0 } = {}) {
   const curve = new THREE.CatmullRomCurve3(points.map((p) => new THREE.Vector3(...p)), closed, 'centripetal');
   const pos = [], nrm = [], uvs = [], idx = [];
   const up0 = new THREE.Vector3(...upHint);
   for (let i = 0; i <= tubular; i++) {
     const t = i / tubular, c = curve.getPointAt(t), T = curve.getTangentAt(t);
-    const U = up0.clone().sub(T.clone().multiplyScalar(up0.dot(T))).normalize();
-    const S = new THREE.Vector3().crossVectors(T, U).normalize();
+    const U0 = up0.clone().sub(T.clone().multiplyScalar(up0.dot(T))).normalize();
+    const S0 = new THREE.Vector3().crossVectors(T, U0).normalize();
+    // перекрут: лента поворачивается вокруг своей оси, к концам снова ложится плоско
+    const tw = twist * Math.sin(Math.PI * t), ct = Math.cos(tw), st = Math.sin(tw);
+    const U = U0.clone().multiplyScalar(ct).addScaledVector(S0, st), S = S0.clone().multiplyScalar(ct).addScaledVector(U0, -st);
     for (let j = 0; j <= radial; j++) {
       const a = (j / radial) * TAU, ca = Math.cos(a), sa = Math.sin(a);
       const p = c.clone().addScaledVector(S, ca * width).addScaledVector(U, sa * thick);
@@ -255,31 +271,42 @@ export const COLORWAYS = {
 // ---------------------------------------------------------------------
 // Сборка
 // ---------------------------------------------------------------------
-export function buildShoe() {
-  const knit = TX.knit(), tread = TX.tread(), carbon = TX.carbon(), foam = TX.foam(), logoTex = TX.logo(), holesTex = TX.holes(), weave = TX.weave();
+export function buildShoe({ jersey = null } = {}) {
+  const knit = TX.knit(), smudge = TX.smudge(), tread = TX.tread(), carbon = TX.carbon(), foam = TX.foam(), logoTex = TX.logo(), holesTex = TX.holes(), weave = TX.weave();
   const tabLabel = TX.label('PULSE', 512, 128, 72);
   const M = {
-    upper: new THREE.MeshPhysicalMaterial({ vertexColors: true, map: knit.color, normalMap: knit.normal, normalScale: new THREE.Vector2(1.4, 1.4), roughnessMap: knit.rough, roughness: 1, sheen: 0.35, sheenRoughness: 0.5, sheenColor: new THREE.Color('#bfc3cc') }),
+    upper: new THREE.MeshPhysicalMaterial({ vertexColors: true, map: knit.color, normalMap: knit.normal, normalScale: new THREE.Vector2(1.4, 1.4), roughnessMap: knit.rough, roughness: 1, sheen: 0.4, sheenRoughness: 0.75, sheenColor: new THREE.Color('#8f949e') }),
     lining: new THREE.MeshPhysicalMaterial({ color: '#333', map: knit.color, roughness: 0.95, side: THREE.BackSide }),
     collar: new THREE.MeshPhysicalMaterial({ color: '#444', normalMap: knit.normal, normalScale: new THREE.Vector2(0.5, 0.5), roughness: 0.85, sheen: 0.3, sheenRoughness: 0.6, sheenColor: new THREE.Color('#9aa0aa') }),
     foamTop: new THREE.MeshPhysicalMaterial({ color: '#fff', map: foam.color, normalMap: foam.normal, normalScale: new THREE.Vector2(1, 1), roughnessMap: foam.rough, roughness: 1, clearcoat: 0.12, clearcoatRoughness: 0.5, sheen: 0.25, sheenRoughness: 0.6, sheenColor: new THREE.Color('#ffffff') }),
     foamBottom: null,
-    plate: new THREE.MeshPhysicalMaterial({ color: '#fff', map: carbon.color, roughnessMap: carbon.rough, roughness: 1, clearcoat: 1, clearcoatRoughness: 0.06, anisotropy: 0.8, anisotropyRotation: 0.5 }),
+    plate: new THREE.MeshPhysicalMaterial({ color: '#fff', map: carbon.color, roughnessMap: carbon.rough, roughness: 1, clearcoat: 1, clearcoatRoughness: 0.12, clearcoatRoughnessMap: smudge, anisotropy: 0.8, anisotropyRotation: 0.5 }),
     stitch: new THREE.MeshPhysicalMaterial({ color: '#666', roughness: 0.8, sheen: 1, sheenColor: new THREE.Color('#ffffff') }),
     holes: new THREE.MeshPhysicalMaterial({ color: '#050506', map: holesTex, transparent: true, alphaTest: 0.45, roughness: 1, polygonOffset: true, polygonOffsetFactor: -1 }),
-    aglet: new THREE.MeshPhysicalMaterial({ color: '#222', roughness: 0.25, clearcoat: 1, clearcoatRoughness: 0.1 }),
+    aglet: new THREE.MeshPhysicalMaterial({ color: '#222', roughness: 0.5, roughnessMap: smudge, clearcoat: 1, clearcoatRoughness: 0.2, clearcoatRoughnessMap: smudge }),
     bite: new THREE.MeshPhysicalMaterial({ color: '#09090b', roughness: 0.6 }),
     outsole: new THREE.MeshPhysicalMaterial({ color: '#222', map: tread.color, normalMap: tread.normal, normalScale: new THREE.Vector2(1.2, 1.2), roughnessMap: tread.rough, roughness: 1 }),
-    cage: new THREE.MeshPhysicalMaterial({ color: '#444', roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.12 }),
-    overlay: new THREE.MeshPhysicalMaterial({ color: '#111', normalMap: knit.normal, normalScale: new THREE.Vector2(0.12, 0.12), roughness: 0.3, clearcoat: 0.8, clearcoatRoughness: 0.18 }),
+    cage: new THREE.MeshPhysicalMaterial({ color: '#444', roughness: 0.56, roughnessMap: smudge, clearcoat: 1, clearcoatRoughness: 0.24, clearcoatRoughnessMap: smudge }),
+    overlay: new THREE.MeshPhysicalMaterial({ color: '#111', normalMap: knit.normal, normalScale: new THREE.Vector2(0.12, 0.12), roughness: 0.6, roughnessMap: smudge, clearcoat: 0.8, clearcoatRoughness: 0.34, clearcoatRoughnessMap: smudge }),
     logo: new THREE.MeshPhysicalMaterial({ color: '#f60', map: logoTex, transparent: true, alphaTest: 0.35, roughness: 0.22, metalness: 0.15, clearcoat: 1, clearcoatRoughness: 0.05, polygonOffset: true, polygonOffsetFactor: -2 }),
     laces: new THREE.MeshPhysicalMaterial({ color: '#eee', normalMap: weave, normalScale: new THREE.Vector2(1.1, 1.1), roughness: 0.7, sheen: 0.45, sheenRoughness: 0.6, sheenColor: new THREE.Color('#9a9a9a') }),
     metal: new THREE.MeshPhysicalMaterial({ color: '#d4d7dc', metalness: 1, roughness: 0.22 }),
-    tab: new THREE.MeshPhysicalMaterial({ color: '#f60', roughness: 0.38, clearcoat: 0.7, clearcoatRoughness: 0.2 }),
+    tab: new THREE.MeshPhysicalMaterial({ color: '#f60', roughness: 0.7, roughnessMap: smudge, clearcoat: 0.7, clearcoatRoughness: 0.4, clearcoatRoughnessMap: smudge }),
     tabText: new THREE.MeshPhysicalMaterial({ color: '#fff', map: tabLabel, transparent: true, alphaTest: 0.4, roughness: 0.4, polygonOffset: true, polygonOffsetFactor: -2 }),
     insole: new THREE.MeshPhysicalMaterial({ color: '#202126', roughness: 0.95, sheen: 0.4, sheenColor: new THREE.Color('#888') }),
   };
+  // ткань канта, языка, подкладки и стельки — скан (если загрузился)
+  M.tongue = M.collar.clone();
+  if (jersey) {
+    const fabric = (m, set, ns = 1) => { m.map = set.color; m.normalMap = set.normal; m.normalScale = new THREE.Vector2(ns, ns); m.roughnessMap = set.rough; m.roughness = 1.6; m.needsUpdate = true; };
+    fabric(M.tongue, jersey.at(0.25, 0.25), 1.2);
+    fabric(M.lining, jersey.at(0.25, 0.25), 0.8);
+    fabric(M.insole, jersey.at(2.3, 0.7), 0.8);
+    M.insole.color.set('#26272c');
+  }
   M.foamBottom = M.foamTop.clone();
+  // пена немного пропускает свет: края и тени чуть светятся изнутри
+  for (const m of [M.foamTop, M.foamBottom]) translucent(m);
   knit.color.repeat.set(1, 1);
 
   const root = new THREE.Group();
@@ -320,7 +347,9 @@ export function buildShoe() {
     const s = lerp(-0.2, 0.2, i / 60), p = rim(lamOf(s), sideOf(s)), n = upperNormal(s, 0.98);
     collarPts.push([p[0] - n[0] * 0.012, p[1] - 0.012, p[2] - n[2] * 0.012]);
   }
-  add('upper', new THREE.TubeGeometry(new THREE.CatmullRomCurve3(collarPts.map((q) => new THREE.Vector3(...q)), false, 'centripetal'), 160, 0.03, 14, false), M.collar, 'collar');
+  const collarCurve = new THREE.CatmullRomCurve3(collarPts.map((q) => new THREE.Vector3(...q)), false, 'centripetal');
+  if (jersey) { const set = jersey.at(collarCurve.getLength() / 1.2, 0.19 / 1.2); M.collar.map = set.color; M.collar.normalMap = set.normal; M.collar.normalScale = new THREE.Vector2(1.2, 1.2); M.collar.roughnessMap = set.rough; M.collar.roughness = 1.6; M.collar.needsUpdate = true; }
+  add('upper', new THREE.TubeGeometry(collarCurve, 160, 0.03, 14, false), M.collar, 'collar');
 
   // задник (жёсткая накладка на пятке)
   add('upper', patch(48, 22, (a) => lerp(-0.085, 0.085, a), (a, b) => b * (0.6 - 0.32 * (2 * a - 1) ** 2), 0.006), M.overlay, 'heelCounter');
@@ -357,7 +386,7 @@ export function buildShoe() {
     const thick = 0.022 * endR(1 - a, 0.08) + 0.004;
     const arch = 0.025 * (1 - ce * ce);
     return { p: [C[0] + S.x * w * ce + U.x * (thick * sv + arch), C[1] + S.y * w * ce + U.y * (thick * sv + arch), C[2] + S.z * w * ce + U.z * (thick * sv + arch)], uv: [a * 4, b * 2] };
-  }, { flip: true }), M.collar, 'tongue');
+  }, { flip: true }), M.tongue, 'tongue');
   // ярлык на языке
   add('upper', grid(10, 6, (a, b) => {
     const C = tongueC(lerp(0.86, 0.97, b));
@@ -378,9 +407,13 @@ export function buildShoe() {
     m.lookAt(e.p[0] + e.n[0], e.p[1] + e.n[1], e.p[2] + e.n[2]);
   }
   const lift = (p, h) => [p[0], p[1] + h, p[2]];
+  const lr = TX.rng(97);
   const laceSeg = (A, B, h) => {
-    const mid = [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2 + h, (A[2] + B[2]) / 2];
-    return ribbon([lift(A, 0.004), lerp3(A, mid, 0.45, 0.012), mid, lerp3(B, mid, 0.45, 0.012), lift(B, 0.004)], 0.017, 0.0055, [0, 1, 0], { tubular: 40, radial: 8 });
+    // середина ложится на язык, отрезок слегка провисает и перекручивается — у каждого по-своему
+    const hh = h * (0.82 + 0.3 * lr()), side = (lr() - 0.5) * 0.008;
+    const mid = [(A[0] + B[0]) / 2 + side, (A[1] + B[1]) / 2 + hh, (A[2] + B[2]) / 2];
+    const sag = 0.004 + 0.004 * lr();
+    return ribbon([lift(A, 0.004), lerp3(A, mid, 0.45, 0.012 - sag), mid, lerp3(B, mid, 0.45, 0.012 - sag * 0.7), lift(B, 0.004)], 0.017, 0.0055, [0, 1, 0], { tubular: 40, radial: 8, twist: (lr() - 0.5) * 1.1 });
   };
   const lerp3 = (a, b, t, up = 0) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t) + up, lerp(a[2], b[2], t)];
   add('upper', laceSeg(eyelets[0][0].p, eyelets[0][1].p, 0.02), M.laces, 'lace0');
@@ -391,7 +424,7 @@ export function buildShoe() {
   // бант: две плоские петли и хвосты, лежащие на подъёме
   const K = lerp3(eyelets[6][0].p, eyelets[6][1].p, 0.5, 0.045);
   for (const sd of [1, -1]) {
-    add('upper', ribbon([K, [K[0] + 0.05, K[1] + 0.03, K[2] + sd * 0.05], [K[0] + 0.04, K[1] + 0.045, K[2] + sd * 0.13], [K[0] - 0.03, K[1] + 0.035, K[2] + sd * 0.16], [K[0] - 0.06, K[1] + 0.01, K[2] + sd * 0.09], [K[0] - 0.01, K[1] - 0.004, K[2] + sd * 0.015]], 0.016, 0.005, [0, 1, 0], { tubular: 60, radial: 8 }), M.laces, 'bow' + sd);
+    add('upper', ribbon([K, [K[0] + 0.05, K[1] + 0.028, K[2] + sd * 0.05], [K[0] + 0.045, K[1] + 0.03, K[2] + sd * (0.13 + 0.01 * sd)], [K[0] - 0.02, K[1] + 0.008, K[2] + sd * 0.17], [K[0] - 0.065, K[1] - 0.004, K[2] + sd * 0.1], [K[0] - 0.01, K[1] - 0.004, K[2] + sd * 0.015]], 0.016, 0.005, [0, 1, 0], { tubular: 60, radial: 8, twist: 0.5 * sd }), M.laces, 'bow' + sd);
     const sT = sOfLam(0.5, sd), p1 = upperPoint(sT, 0.9), n1 = upperNormal(sT, 0.9), p2 = upperPoint(sOfLam(0.43, sd), 0.72), n2 = upperNormal(sOfLam(0.43, sd), 0.72);
     add('upper', ribbon([K, [K[0] + 0.02, K[1] + 0.01, K[2] + sd * 0.06], [p1[0] + n1[0] * 0.018, p1[1] + n1[1] * 0.018, p1[2] + n1[2] * 0.018], [p2[0] + n2[0] * 0.014, p2[1] + n2[1] * 0.014, p2[2] + n2[2] * 0.014]], 0.016, 0.005, [0, 1, 0], { tubular: 50, radial: 8 }), M.laces, 'tail' + sd);
     add('upper', laceSeg(eyelets[6][sd > 0 ? 0 : 1].p, K, 0.01), M.laces, 'toKnot' + sd);
@@ -477,12 +510,20 @@ export function buildShoe() {
     const cw = COLORWAYS[name] || COLORWAYS.ember;
     const A = new THREE.Color(cw.upperA), B = new THREE.Color(cw.upperB);
     const col = upperGeo.attributes.color, w = upperGeo.userData.w;
-    for (let k = 0; k < col.count; k++) { const c = A.clone().lerp(B, w[k]); col.setXYZ(k, c.r, c.g, c.b); }
+    const P = upperGeo.attributes.position;
+    for (let k = 0; k < col.count; k++) {
+      const x = P.getX(k), y = P.getY(k), z = P.getZ(k);
+      // пряжа никогда не окрашена идеально ровно: мягкие пятна в пару сантиметров
+      const n = 0.5 * Math.sin(x * 7.1 + z * 3.3) + 0.3 * Math.sin(y * 11.7 - x * 4.9) + 0.2 * Math.sin(z * 17.3 + y * 5.1);
+      const c = A.clone().lerp(B, w[k]).multiplyScalar(1 + 0.05 * n);
+      col.setXYZ(k, c.r, c.g, c.b);
+    }
     col.needsUpdate = true;
     M.lining.color.set(cw.lining);
-    M.collar.color.set(cw.lining);
+    M.collar.color.set(cw.lining); M.tongue.color.set(cw.lining);
     M.foamTop.color.set(cw.foamTop);
     M.foamBottom.color.set(cw.foamBottom);
+    M.foamTop.userData.sss.value.set(cw.foamTop); M.foamBottom.userData.sss.value.set(cw.foamBottom);
     M.outsole.color.set(cw.outsole);
     M.overlay.color.set(cw.overlay);
     M.cage.color.set(cw.cage);

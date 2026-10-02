@@ -6,6 +6,8 @@ import { createStage } from './stage.js';
 import { evaluate, DURATION, GLOWS, setRig } from './timeline.js';
 import { createOverlay, CALLOUTS } from './overlay.js';
 import { renderTrack, toWav } from './audio.js';
+import { loadHDRI } from './hdri.js';
+import { scans } from './textures.js';
 
 const CAPTURE = new URLSearchParams(location.search).has('capture');
 const COVER_T = 30.2;   // обложка до нажатия: готовый пэкшот
@@ -20,7 +22,12 @@ const canvas = $('gl');
 const stageEl = $('stage');
 const W0 = 1920, H0 = 1080;
 const stage = createStage(canvas, { width: W0, height: H0, pixelRatio: 1 });
-const shoe = buildShoe();
+// настоящая фотостудия (HDRI); если не загрузилась — остаётся нарисованная
+try { stage.setEnvironment(await loadHDRI('assets/studio.png')); } catch (e) { console.warn('HDRI не загрузилась', e); }
+// скан ткани для канта и языка; без него кроссовок соберётся с нарисованной тканью
+let jersey = null;
+try { jersey = await scans(); } catch (e) { console.warn('скан ткани не загрузился', e); }
+const shoe = buildShoe({ jersey });
 stage.adopt(shoe.root);
 setRig(shoe.macro);
 stage.bigText.userData.redraw();
@@ -78,6 +85,8 @@ function apply(S, cwOverride) {
   stage.scene.environmentRotation.set(0, S.light.envRot || 0, 0);
   L.sun.intensity = S.light.sun;
   stage.scene.environmentIntensity = S.light.env;
+  // пена светится изнутри сильнее, когда в студии светлее
+  shoe.materials.foamTop.userData.sssAmt.value = shoe.materials.foamBottom.userData.sssAmt.value = 0.1 * S.light.env;
 
   // фон, полосы, надпись, эффекты
   stage.bg.uniforms.glow.value.copy(c1); stage.bg.uniforms.glow2.value.copy(c2);
@@ -110,12 +119,38 @@ function project(part) {
   return [(tmp.x + 1) / 2 * W0, (1 - tmp.y) / 2 * H0];
 }
 
+// ---------------------------------------------------------------------
+// Смаз движения (только для рендера MP4): затвор открыт половину кадра,
+// за это время кадр рисуется несколько раз и усредняется. Сколько раз —
+// зависит от того, насколько далеко на экране сдвигается кроссовок.
+// ---------------------------------------------------------------------
+const MB = CAPTURE && !new URLSearchParams(location.search).has('nomb');
+const SHUTTER = 0.5 / 24, MB_STEP = 5, MB_MAX = 8;
+const PROBE = [[-1.4, 0.85, 0], [1.45, 0.3, 0], [-1.2, 0.02, 0.35], [1.2, 0.02, -0.3], [0.3, 0.75, 0], [0, 0.5, 0.45], [0, 0.5, -0.45]];
+function screenProbe(t) {
+  apply(evaluate(t));
+  shoe.root.updateMatrixWorld(true);
+  const out = PROBE.map((p) => tmp.set(...p).applyMatrix4(shoe.root.matrixWorld).project(cam).toArray());
+  for (const part of CALLOUTS.map((c) => c.part)) out.push(tmp.set(...shoe.anchors[part]).applyMatrix4(shoe.groups[part].matrixWorld).project(cam).toArray());
+  return out;
+}
+function motionPixels(t) {
+  // окно затвора начинается в момент кадра — так смаз не перетекает через монтажную склейку
+  const a = screenProbe(t), b = screenProbe(t + SHUTTER);
+  let d = 0;
+  const vis = (p) => Math.abs(p[2]) < 1 && Math.abs(p[0]) < 1.2 && Math.abs(p[1]) < 1.2; // только точки в кадре
+  a.forEach((p, i) => { const q = b[i]; if (vis(p) && vis(q)) d = Math.max(d, Math.hypot((p[0] - q[0]) * W0 / 2, (p[1] - q[1]) * H0 / 2)); });
+  return d;
+}
+
 function renderAt(t) {
+  const n = MB ? Math.max(1, Math.min(MB_MAX, Math.ceil(motionPixels(t) / MB_STEP))) : 1;
   const S = evaluate(t);
   const accent = apply(S);
   shoe.root.updateMatrixWorld(true);
   overlay.update(t, S, project, accent);
-  stage.render(t);
+  if (n === 1) stage.render(t);
+  else stage.render(t, n, (i) => { apply(evaluate(t + SHUTTER * (i + 0.5) / n)); shoe.root.updateMatrixWorld(true); });
   return S;
 }
 
@@ -129,6 +164,7 @@ const getTrack = () => (trackPromise ||= renderTrack(48000));
 window.__ad = {
   duration: DURATION,
   render: (t) => { renderAt(t); return true; },
+  motion: (t) => motionPixels(t),
   wav: async () => {
     const buf = await getTrack();
     const bytes = new Uint8Array(toWav(buf));

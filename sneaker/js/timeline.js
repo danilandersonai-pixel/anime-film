@@ -61,7 +61,22 @@ export function evaluate(t) {
     bokeh: { on: false, focus: 3, aperture: 0.002, maxblur: 0.006 }, bloom: 0.45, spot: 0.08,
   };
   SHOT_FN[S.shot](t, S);
+  handheld(t, S);
   return S;
+}
+
+// «живая» камера: медленный дрейф и лёгкая дрожь, как у оператора со стабилизатором.
+// Амплитуда — доли градуса; на макро сильнее, на пэкшоте почти нет.
+const SHAKE = { dark: 0.5, knit: 1, laces: 1, heel: 0.8, pull: 0.6, top: 0.5, flip: 0.7, explode: 0.4, run: 1, front: 0.5, colors: 0.35, pack: 0.3 };
+function handheld(t, S) {
+  const a = SHAKE[S.shot] ?? 0.5, w = (f, p) => Math.sin(t * f + p);
+  const n1 = 0.6 * w(1.13, 0.3) + 0.3 * w(2.71, 1.7) + 0.1 * w(6.3, 4.1);
+  const n2 = 0.6 * w(0.97, 2.2) + 0.3 * w(2.33, 0.4) + 0.1 * w(5.7, 3.3);
+  const n3 = 0.6 * w(0.71, 5.1) + 0.4 * w(1.91, 2.6);
+  const k = 0.0032 * dist3(S.cam.pos, S.cam.target) * a;
+  S.cam.target = add3(S.cam.target, [n1 * k, n2 * k, n3 * k]);
+  S.cam.pos = add3(S.cam.pos, [n2 * 0.003 * a, n3 * 0.003 * a, n1 * 0.003 * a]);
+  S.cam.roll += 0.0025 * a * (0.7 * w(0.83, 1.1) + 0.3 * w(2.1, 0.2));
 }
 const focusOn = (S, p, aperture, maxblur = 0.012) => { S.bokeh = { on: true, focus: dist3(S.cam.pos, p), aperture, maxblur }; };
 

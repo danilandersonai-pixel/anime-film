@@ -9,14 +9,17 @@ import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { Reflector } from 'three/addons/objects/Reflector.js';
 import { HorizontalBlurShader } from 'three/addons/shaders/HorizontalBlurShader.js';
 import { VerticalBlurShader } from 'three/addons/shaders/VerticalBlurShader.js';
+import { smudge } from './textures.js';
 
 const SHOE_LAYER = 1;
 
-// финальная обработка в экранном пространстве: виньетка, зерно,
-// хроматическая аберрация по краям, вспышка, затемнение
+// финальная обработка в экранном пространстве: хроматическая аберрация по краям,
+// мягкая плёночная кривая (приподнятый чёрный, тени холоднее, света теплее),
+// виньетка, зерно сильнее в средних тонах, вспышка, затемнение
 const FinalShader = {
   uniforms: { tDiffuse: { value: null }, time: { value: 0 }, flash: { value: 0 }, fade: { value: 0 }, vignette: { value: 0.9 }, grain: { value: 0.045 }, aberr: { value: 0.0018 }, aspect: { value: 16 / 9 } },
   vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
@@ -28,9 +31,14 @@ const FinalShader = {
       float r2 = dot(c * vec2(aspect, 1.0), c * vec2(aspect, 1.0));
       vec2 off = c * aberr * (0.5 + r2 * 2.0);
       vec3 col = vec3(texture2D(tDiffuse, vUv + off).r, texture2D(tDiffuse, vUv).g, texture2D(tDiffuse, vUv - off).b);
+      col = clamp(col, 0.0, 1.0);
+      float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
+      col = mix(col, col * col * (3.0 - 2.0 * col), 0.12);
+      col += vec3(-0.006, 0.0, 0.01) * (1.0 - l) + vec3(0.01, 0.003, -0.008) * l;
+      col = col * 0.985 + 0.006;
       col *= mix(1.0, smoothstep(1.35, 0.15, r2 * 1.1), vignette);
-      float g = hash(vUv * 1024.0 + fract(time * 7.13) * 91.0) - 0.5;
-      col += g * grain * (1.0 - col * 0.6);
+      float g = hash(floor(vUv * vec2(1371.0, 771.0)) * 0.73 + fract(time * 7.13) * 91.0) - 0.5;
+      col += g * grain * (0.55 + 1.8 * l * (1.0 - l));
       col = mix(col, vec3(1.0), flash);
       col *= 1.0 - fade;
       gl_FragColor = vec4(col, 1.0);
@@ -115,7 +123,7 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
   const texMatrix = reflector.material.uniforms.textureMatrix.value;
   const floorMat = new THREE.ShaderMaterial({
     uniforms: {
-      tDiffuse: { value: reflector.getRenderTarget().texture }, textureMatrix: { value: texMatrix }, tShadow: { value: rtShadow.texture },
+      tDiffuse: { value: reflector.getRenderTarget().texture }, textureMatrix: { value: texMatrix }, tShadow: { value: rtShadow.texture }, tSmudge: { value: smudge() },
       shadowSize: { value: SH.size }, shadowOpacity: { value: 0.95 }, floorColor: { value: new THREE.Color('#0a0b0e') }, horizon: { value: new THREE.Color('#0b0c10').multiplyScalar(0.62) },
       spotColor: { value: new THREE.Color('#ffffff') }, spot: { value: 0.05 }, reflect: { value: 0.55 }, blur: { value: 0.0016 },
       ring: { value: 0 }, ringR: { value: 0 }, ringColor: { value: new THREE.Color('#ff6a2a') },
@@ -124,14 +132,20 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
       uniform mat4 textureMatrix; varying vec4 vUv; varying vec3 vWorld;
       void main(){ vUv = textureMatrix * vec4(position, 1.0); vec4 w = modelMatrix * vec4(position, 1.0); vWorld = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
     fragmentShader: `
-      uniform sampler2D tDiffuse, tShadow; uniform vec3 floorColor, horizon, spotColor, ringColor;
+      uniform sampler2D tDiffuse, tShadow, tSmudge; uniform vec3 floorColor, horizon, spotColor, ringColor;
       uniform float shadowSize, shadowOpacity, spot, reflect, blur, ring, ringR;
       varying vec4 vUv; varying vec3 vWorld;
       void main(){
-        vec2 uv = vUv.xy / vUv.w;
+        // настоящий глянцевый пол не идеальное зеркало: разводы от протирки,
+        // микроцарапины и пыль делают отражение местами мутнее
+        float s1 = texture2D(tSmudge, vWorld.xz * 0.16).g, s2 = texture2D(tSmudge, vWorld.xz * 0.61 + 0.37).g;
+        float rough = s1 * 0.65 + s2 * 0.35;
+        vec2 uv = vUv.xy / vUv.w + (vec2(s1, s2) - 0.5) * 0.0025;
+        float bl = blur * (0.4 + 1.6 * rough);
         vec3 refl = vec3(0.0);
-        for (int i = -2; i <= 2; i++) for (int j = -2; j <= 2; j++) refl += texture2D(tDiffuse, uv + vec2(float(i), float(j)) * blur).rgb;
+        for (int i = -2; i <= 2; i++) for (int j = -2; j <= 2; j++) refl += texture2D(tDiffuse, uv + vec2(float(i), float(j)) * bl).rgb;
         refl /= 25.0;
+        refl *= 1.25 - 0.55 * rough;
         float d = length(vWorld.xz);
         vec3 V = normalize(cameraPosition - vWorld);
         float fres = 0.06 + 0.94 * pow(1.0 - max(V.y, 0.0), 5.0);
@@ -142,6 +156,8 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
         float sa = 0.0;
         if (suv.x > 0.0 && suv.x < 1.0 && suv.y > 0.0 && suv.y < 1.0) sa = texture2D(tShadow, suv).a;
         col *= 1.0 - clamp(sa, 0.0, 1.0) * shadowOpacity;
+        float dust = smoothstep(0.72, 0.95, s2);
+        col += spotColor * dust * (0.006 + spot * 0.22 * exp(-d * d / 4.0)) * (1.0 - smoothstep(3.0, 9.0, d));
         // кольцо-волна от приземления
         float rr = abs(d - ringR);
         col += ringColor * ring * (exp(-rr * rr / 0.004) * 1.5 + exp(-rr * rr / 0.05) * 0.4);
@@ -235,9 +251,23 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
   const bokeh = new BokehPass(scene, camera, { focus: 3, aperture: 0.002, maxblur: 0.006 });
   bokeh.enabled = false;
   const bloom = new UnrealBloomPass(new THREE.Vector2(width, height), 0.5, 0.6, 0.92);
+  // широкие слои свечения теплее — как ореол (халация) вокруг бликов на плёнке
+  [[1, 1, 1], [1, 0.96, 0.92], [1, 0.88, 0.78], [1, 0.8, 0.66], [1, 0.74, 0.58]].forEach((c, i) => bloom.bloomTintColors[i].set(...c));
   const output = new OutputPass();
   const final = new ShaderPass(FinalShader);
-  composer.addPass(renderPass); composer.addPass(gtao); composer.addPass(bokeh); composer.addPass(bloom); composer.addPass(output); composer.addPass(final);
+  // композитор рисует только сцену (в линейной яркости); свечение, вывод и обработка — один раз
+  // после усреднения подкадров, иначе смаз движения пришлось бы считать пять раз
+  composer.renderToScreen = false;
+  composer.addPass(renderPass); composer.addPass(gtao); composer.addPass(bokeh);
+  const hdrOpts = { type: THREE.HalfFloatType };
+  const accA = new THREE.WebGLRenderTarget(width * pixelRatio, height * pixelRatio, hdrOpts), accB = accA.clone(), ldr = accA.clone();
+  const avgMat = new THREE.ShaderMaterial({
+    uniforms: { tNew: { value: null }, tAcc: { value: null }, k: { value: 1 } },
+    vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+    fragmentShader: 'uniform sampler2D tNew, tAcc; uniform float k; varying vec2 vUv; void main(){ gl_FragColor = mix(texture2D(tAcc, vUv), texture2D(tNew, vUv), k); }',
+    depthTest: false, depthWrite: false,
+  });
+  const avgQuad = new FullScreenQuad(avgMat);
 
   function setSize(w, h, pr = pixelRatio) {
     renderer.setPixelRatio(pr);
@@ -246,7 +276,14 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
     composer.setPixelRatio(pr);
     composer.setSize(w, h);
     reflector.getRenderTarget().setSize(Math.round(w * pr * 0.5), Math.round(h * pr * 0.5));
+    for (const t of [accA, accB, ldr]) t.setSize(Math.round(w * pr), Math.round(h * pr));
+    bloom.setSize(Math.round(w * pr), Math.round(h * pr));
     final.uniforms.aspect.value = w / h;
+  }
+
+  function setEnvironment(tex) {
+    scene.environment = pmrem.fromEquirectangular(tex).texture;
+    tex.dispose();
   }
 
   // помечаем меши кроссовка, чтобы их видела камера тени
@@ -255,13 +292,28 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
     scene.add(root);
   }
 
-  function render(t) {
-    renderContactShadow(3.2);
-    composer.render();
+  // n подкадров усредняются — так получается смаз движения, как у камеры с открытым
+  // затвором; setSub(i) выставляет сцену на момент i-го подкадра
+  function render(t, n = 1, setSub = null) {
+    let acc = null;
+    for (let i = 0; i < n; i++) {
+      if (setSub) setSub(i);
+      renderContactShadow(3.2);
+      composer.render();
+      const cur = composer.readBuffer;
+      if (n === 1) { acc = cur; break; }
+      const dst = acc === accA ? accB : accA;
+      avgMat.uniforms.tNew.value = cur.texture; avgMat.uniforms.tAcc.value = (acc || cur).texture; avgMat.uniforms.k.value = 1 / (i + 1);
+      renderer.setRenderTarget(dst); avgQuad.render(renderer); acc = dst;
+    }
+    bloom.render(renderer, null, acc, 0, false);
+    output.render(renderer, ldr, acc);
+    final.renderToScreen = true;
+    final.render(renderer, null, ldr);
   }
 
   return {
-    renderer, scene, camera, composer, adopt, render, setSize, setStreaks,
+    renderer, scene, camera, composer, adopt, render, setSize, setStreaks, setEnvironment,
     lights: { key, rimL, rimR, sweep, sun }, gtao, bars, barMats: [barMat, barMat2], sweepBar, bigText, bg: bgMat, floor: floorMat, bloom, bokeh, final, shadowCam,
   };
 }

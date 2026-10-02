@@ -1,6 +1,6 @@
 // textures.js — процедурные текстуры кроссовка.
 // Всё рисуется на холсте при загрузке: карта высот → карта нормалей,
-// плюс карты цвета и шероховатости. Никаких внешних картинок.
+// плюс карты цвета и шероховатости. Единственный скан — ткань канта и языка (scans).
 import * as THREE from 'three';
 
 export function rng(seed) {
@@ -68,32 +68,95 @@ function tex(c, { srgb = false, repeat = true, aniso = 8 } = {}) {
 }
 
 // ---------------------------------------------------------------------
-// Трикотаж верха: столбики петель «ёлочкой» + волокна
+// Трикотаж верха: столбики петель «ёлочкой». Каждая петля чуть своя
+// (сдвиг, размер, наклон, тон), нить скручена из двух прядей, сверху ворс,
+// между петлями — тёмные просветы, сквозь которые видна подкладка.
 // ---------------------------------------------------------------------
 export function knit() {
-  const W = 512, H = 512, cols = 16, rows = 22;
-  const hgt = new Float32Array(W * H);
-  const fib = valueNoise(W, H, 3, 11);
-  const tone = new Float32Array(W * H), r = rng(31), cellTone = new Float32Array(cols * rows * 2).map(() => r() * 2 - 1);
+  const W = 1024, H = 1024, cols = 16, rows = 22;
+  const hgt = new Float32Array(W * H), tone = new Float32Array(W * H), ply = new Float32Array(W * H);
+  const fuzz = valueNoise(W, H, 2, 11), fib = valueNoise(W, H, 6, 13);
+  const r = rng(31), J = new Float32Array(cols * rows * 2 * 5).map(() => r() * 2 - 1);
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const cx = (x / W) * cols, cy = (y / H) * rows;
-    const fx = cx - Math.floor(cx), fy = cy - Math.floor(cy);
-    let v = 0;
-    for (const [ax, sg] of [[0.27, 1], [0.73, -1]]) {
-      // наклонённая петля-эллипс
-      const dx = fx - ax, dy = fy - 0.5;
-      const a = 0.55 * sg, c = Math.cos(a), s = Math.sin(a);
-      const u = (dx * c + dy * s) / 0.2, w = (-dx * s + dy * c) / 0.6;
+    const cx = (x / W) * cols, cy = (y / H) * rows, ix = Math.floor(cx), iy = Math.floor(cy), fx = cx - ix, fy = cy - iy;
+    let v = 0, tn = 0, pl = 0;
+    for (let k = 0; k < 2; k++) {
+      const o = ((iy * cols + ix) * 2 + k) * 5;
+      const ax = (k ? 0.73 : 0.27) + J[o] * 0.025, ay = 0.5 + J[o + 1] * 0.03;
+      const ang = (0.55 + J[o + 2] * 0.06) * (k ? -1 : 1), c = Math.cos(ang), sn = Math.sin(ang), sz = 1 + J[o + 3] * 0.06;
+      const dx = fx - ax, dy = fy - ay;
+      const u = (dx * c + dy * sn) / (0.2 * sz), w = (-dx * sn + dy * c) / (0.6 * sz);
       const r2 = u * u + w * w;
-      if (r2 < 1) { const h = Math.sqrt(1 - r2); if (h > v) { v = h; tone[y * W + x] = cellTone[(Math.floor(cy) * cols + Math.floor(cx)) * 2 + (ax < 0.5 ? 0 : 1)]; } }
+      if (r2 < 1) {
+        const tw = Math.sin((w * 3.2 + u * 1.1) * Math.PI * 2); // две пряди, скрученные по косой
+        const h = Math.sqrt(1 - r2) * (0.86 + 0.14 * tw);
+        if (h > v) { v = h; tn = J[o + 4]; pl = tw; }
+      }
     }
-    hgt[y * W + x] = v * 0.85 + fib[y * W + x] * 0.15;
+    const i = y * W + x;
+    hgt[i] = v * 0.82 + fuzz[i] * 0.1 + fib[i] * 0.08;
+    tone[i] = tn; ply[i] = pl;
   }
   return {
-    normal: tex(normalFromHeight(hgt, W, H, 3.2)),
-    color: tex(grayFromHeight(hgt, W, H, (v, i) => (0.6 + 0.4 * v) * (1 + 0.16 * tone[i]) + (fib[i] - 0.5) * 0.08), { srgb: true }),
-    rough: tex(grayFromHeight(hgt, W, H, (v) => 0.95 - 0.25 * v)),
+    normal: tex(normalFromHeight(hgt, W, H, 6)),
+    color: tex(grayFromHeight(hgt, W, H, (v, i) => {
+      const loop = Math.max(0, (v - 0.1) / 0.82);
+      return ((0.55 + 0.45 * loop) * (1 + 0.12 * tone[i]) * (1 + 0.07 * ply[i]) + (fuzz[i] - 0.5) * 0.1) * (0.3 + 0.7 * smooth(0.04, 0.4, loop));
+    }), { srgb: true }),
+    rough: tex(grayFromHeight(hgt, W, H, (v, i) => 0.97 - 0.22 * v + 0.06 * (fuzz[i] - 0.5))),
   };
+}
+
+// ---------------------------------------------------------------------
+// Следы на глянце и на полу: мягкие разводы, микроцарапины, отпечатки, пылинки.
+// Это карта шероховатости: светлее — матовее. Среднее значение ≈ 0,5.
+// ---------------------------------------------------------------------
+export function smudge() {
+  const W = 1024, H = 1024, c = canvas(W, H), ctx = c.getContext('2d');
+  const n1 = valueNoise(W, H, 128, 61), n2 = valueNoise(W, H, 32, 67), n3 = valueNoise(W, H, 4, 69);
+  const img = ctx.createImageData(W, H), d = img.data;
+  for (let i = 0; i < W * H; i++) { const v = clamp(0.36 + 0.2 * n1[i] + 0.1 * n2[i] + 0.05 * n3[i]) * 255; d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = v; d[i * 4 + 3] = 255; }
+  ctx.putImageData(img, 0, 0);
+  const r = rng(71);
+  ctx.lineCap = 'round';
+  for (let k = 0; k < 520; k++) { // микроцарапины, в основном в одну сторону — как от протирки
+    const x = r() * W, y = r() * H, a = (r() < 0.7 ? 0.35 : r() * Math.PI) + (r() - 0.5) * 0.4, L = 8 + r() * 110;
+    ctx.strokeStyle = `rgba(255,255,255,${0.05 + r() * 0.13})`; ctx.lineWidth = 0.5 + r() * 0.9;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a) * L, y + Math.sin(a) * L); ctx.stroke();
+  }
+  for (let k = 0; k < 7; k++) { // отпечатки: концентрические овалы-разводы
+    const x = r() * W, y = r() * H, s = 22 + r() * 30, rot = r() * Math.PI;
+    for (let q = 1; q <= 12; q++) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.ellipse(x, y, s * q / 12, s * 1.35 * q / 12, rot, 0, Math.PI * 2); ctx.stroke();
+    }
+  }
+  for (let k = 0; k < 1400; k++) { // пылинки
+    ctx.fillStyle = `rgba(255,255,255,${0.2 + r() * 0.6})`;
+    const z = 0.8 + r() * 1.6; ctx.fillRect(r() * W, r() * H, z, z);
+  }
+  return tex(c);
+}
+
+// ---------------------------------------------------------------------
+// Скан ткани (Poly Haven, «Jersey Melange», CC0) для канта, языка, подкладки
+// и стельки. Цвет переведён в серый: оттенок задаёт расцветка.
+// ---------------------------------------------------------------------
+export async function scans(base = 'assets/') {
+  const L = new THREE.TextureLoader();
+  const load = (f, srgb) => L.loadAsync(base + f).then((t) => {
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;
+    if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  });
+  const [color, normal, rough] = await Promise.all([load('jersey_color.jpg', true), load('jersey_normal.jpg'), load('jersey_rough.jpg')]);
+  // копия набора карт со своим масштабом повтора
+  const at = (rx, ry) => {
+    const o = {};
+    for (const [k, t] of Object.entries({ color, normal, rough })) { o[k] = t.clone(); o[k].repeat.set(rx, ry); o[k].needsUpdate = true; }
+    return o;
+  };
+  return { at };
 }
 
 // ---------------------------------------------------------------------
