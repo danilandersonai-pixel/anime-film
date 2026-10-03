@@ -46,9 +46,20 @@ sc.cycles.device = 'CPU'
 # ---------------------------------------------------------------------
 # Кроссовок по деталям
 # ---------------------------------------------------------------------
+# подкладка в three.js — та же поверхность, что верх, но видна только изнутри (BackSide);
+# в glTF изнанки нет, и в Cycles она легла бы прямо поверх верха. Сдвигаем её внутрь и разворачиваем.
+def fix_lining(objs):
+    for o in objs:
+        if o.type == 'MESH' and o.name.split('.')[0] == 'lining':
+            me = o.data
+            for v in me.vertices:
+                v.co -= v.normal * 0.006
+            me.flip_normals()
+
 before = set(bpy.data.objects)
 bpy.ops.import_scene.gltf(filepath=os.path.join(A.data, 'shoe_parts.glb'))
 OBJS = [o for o in bpy.data.objects if o not in before]
+fix_lining(OBJS)
 base = lambda o: o.name.split('.')[0]
 PARTS = {base(o)[5:]: o for o in OBJS if base(o).startswith('part_')}
 SEGS = {base(o): o for o in OBJS if base(o) in DATA['meta']['segments']}

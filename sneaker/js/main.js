@@ -1,8 +1,9 @@
-// main.js — плеер двух роликов ORBITA Pulse One:
+// main.js — плеер роликов ORBITA Pulse One:
 //   «Улица» (v5, film5.js) — ночной город под ливнем, падение в лужу по законам физики;
-//   «Анатомия» (v6, film6.js) — тёмная студия, разбор на детали, шнуровка, игра света.
+//   «Анатомия» (v6, film6.js) — тёмная студия, разбор на детали, шнуровка, игра света;
+//   «Кристаллы» (v7, film7.js) — полёт сквозь туманный мир кристаллов к тёплому гнезду.
 // Здесь общее: модель, камера и объектив (автофокус, глубина резкости), смаз движения
-// для рендера MP4 и сам плеер. Оба монтажа рендерятся ещё и в Blender Cycles.
+// для рендера MP4 и сам плеер. Все монтажи рендерятся ещё и в Blender Cycles.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { buildShoe } from './shoe.js';
@@ -13,8 +14,9 @@ import { toWav } from './audio5.js';
 
 const Q = new URLSearchParams(location.search);
 const CAPTURE = Q.has('capture');
-// ролик: ?film=anatomy или #anatomy; по умолчанию — «Улица»
-const FILM = (Q.get('film') || location.hash.slice(1)) === 'anatomy' ? 'anatomy' : 'street';
+// ролик: ?film=anatomy|crystals или #anatomy|#crystals; по умолчанию — «Улица»
+const FILMS = { street: 'street', anatomy: 'studio', crystals: 'cave' }; // ролик → сцена
+const FILM = FILMS[Q.get('film') || location.hash.slice(1)] ? (Q.get('film') || location.hash.slice(1)) : 'street';
 const $ = (id) => document.getElementById(id);
 if (CAPTURE) document.body.classList.add('capture');
 
@@ -24,7 +26,7 @@ try { await Promise.race([Promise.all(['800 104px Unbounded', '600 36px Unbounde
 const canvas = $('gl');
 const stageEl = $('stage');
 const W0 = 1920, H0 = 1080;
-const stage = createStage(canvas, { width: W0, height: H0, pixelRatio: 1, mode: FILM === 'street' ? 'street' : 'studio', asphalt: FILM === 'street' ? await loadAsphalt() : null });
+const stage = createStage(canvas, { width: W0, height: H0, pixelRatio: 1, mode: FILMS[FILM], asphalt: FILM === 'street' ? await loadAsphalt() : null });
 let jersey = null;
 try { jersey = await scans(); } catch (e) { console.warn('скан ткани не загрузился', e); }
 const hero = buildShoe({ jersey });
@@ -35,9 +37,10 @@ const cam = stage.camera;
 const NS = 'http://www.w3.org/2000/svg';
 const layer = () => { const s = document.createElementNS(NS, 'svg'); s.setAttribute('viewBox', '0 0 1920 1080'); s.setAttribute('width', '100%'); s.setAttribute('height', '100%'); s.style.position = 'absolute'; s.style.inset = '0'; $('ov').appendChild(s); return s; };
 const layers = { labels: layer(), card: layer() };
-const film = FILM === 'street'
-  ? await (await import('./film5.js')).createFilm5({ stage, hero, jersey, layers })
-  : await (await import('./film6.js')).createFilm6({ stage, hero, layers, camera: cam });
+const film = FILM === 'street' ? await (await import('./film5.js')).createFilm5({ stage, hero, jersey, layers })
+  : FILM === 'anatomy' ? await (await import('./film6.js')).createFilm6({ stage, hero, layers, camera: cam })
+    : await (await import('./film7.js')).createFilm7({ stage, hero, layers, camera: cam });
+const COLORWAY = film.colorway || 'ember'; // расцветка героя ролика
 const DURATION = film.duration;
 
 // автофокус, как у фокус-пуллера: луч из центра кадра до кроссовка
@@ -113,6 +116,8 @@ window.__ad = {
   film: FILM,
   duration: DURATION,
   render: (t) => { renderAt(t); return true; },
+  // проверка ракурсов: кадр t с другой камерой ({ pos, target, fov, fstop, focus })
+  view: (t, c0) => { const S = film.evaluate(t), { light, orbs, ...c } = c0; if (light) Object.assign(S.light, light); if (orbs) S.orbs = orbs; Object.assign(S.cam, c); if (c.focus === undefined) S.cam.focus = Math.hypot(S.cam.pos[0] - S.cam.target[0], S.cam.pos[1] - S.cam.target[1], S.cam.pos[2] - S.cam.target[2]); S.cam.af = 0; apply(S); film.overlay(t, S); stage.render(t); return true; },
   motion: (t) => motionPixels(t),
   wav: async () => {
     const bytes = new Uint8Array(toWav(await getTrack()));
@@ -166,7 +171,7 @@ function initPlayer() {
     const t0 = performance.now();
     if (mode === 'explore') {
       const S = film.explore();
-      if (hero.root.userData.colorway !== (cwPick || 'ember')) hero.setColorway(cwPick || 'ember');
+      if (hero.root.userData.colorway !== (cwPick || COLORWAY)) hero.setColorway(cwPick || COLORWAY);
       apply(S);
       cam.position.copy(controls.object.position);
       cam.quaternion.copy(controls.object.quaternion);
@@ -239,7 +244,7 @@ function initPlayer() {
     bigPlay.hidden = true;
     if (!controls) {
       const proxy = new THREE.PerspectiveCamera(28, 16 / 9, 0.05, 150);
-      proxy.position.set(3.4, 1.3, 3.8);
+      proxy.position.set(...(film.explorePos || [3.4, 1.3, 3.8]));
       controls = new OrbitControls(proxy, stageEl);
       controls.target.set(...film.exploreTarget);
       controls.enableDamping = true; controls.minDistance = 2.2; controls.maxDistance = 9;
@@ -259,7 +264,7 @@ function initPlayer() {
     exploreBtn.setAttribute('aria-pressed', 'false');
     cwPick = null;
     document.querySelectorAll('[data-cw]').forEach((x) => x.setAttribute('aria-pressed', 'false'));
-    if (hero.root.userData.colorway !== 'ember') hero.setColorway('ember');
+    if (hero.root.userData.colorway !== COLORWAY) hero.setColorway(COLORWAY);
     cancelAnimationFrame(raf);
   }
 

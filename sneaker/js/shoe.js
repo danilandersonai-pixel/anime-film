@@ -282,6 +282,8 @@ export function shoeTransform(sh, pos = new THREE.Vector3(), quat = new THREE.Qu
 export const COLORWAYS = {
   ember: { name: 'Ember', stitch: '#6a6c74', hole: '#030304', aglet: '#ff5a1f', upperA: '#141518', upperB: '#5c2412', lining: '#2b2c31', cage: '#24262c', foamTop: '#f3f1ec', foamBottom: '#ff5a1f', outsole: '#1c1d21', logo: '#ff6326', laces: '#f3f1ec', overlay: '#0d0e11', tab: '#ff5a1f', glow: '#ff6a2a' },
   glacier: { name: 'Glacier', stitch: '#8ea7ba', hole: '#56677a', aglet: '#20aef2', upperA: '#eef1f4', upperB: '#bfdcf0', lining: '#c9d4dc', cage: '#dfe8ef', foamTop: '#ffffff', foamBottom: '#58cff9', outsole: '#2a3946', logo: '#20aef2', laces: '#ffffff', overlay: '#d6e0e7', tab: '#20aef2', glow: '#47c4ff' },
+  // белая с оранжевой подошвой — для ролика «Кристаллы» (v7): как белый кроссовок с яркой подушкой
+  lunar: { name: 'Lunar', stitch: '#b8bec6', hole: '#5b6067', aglet: '#ff5a1f', upperA: '#e6e9ec', upperB: '#f7f8f9', lining: '#d7dbe0', cage: '#dde1e6', foamTop: '#ffffff', foamBottom: '#ff5a1f', outsole: '#1c1d21', logo: '#ff6326', laces: '#f4f4f2', overlay: '#cfd4da', tab: '#ff5a1f', glow: '#ff6a2a' },
   volt: { name: 'Volt', stitch: '#3c4418', hole: '#1b1f0a', aglet: '#121315', upperA: '#c3ee2e', upperB: '#efff9a', lining: '#22251a', cage: '#141517', foamTop: '#17181b', foamBottom: '#c9f03c', outsole: '#121315', logo: '#121315', laces: '#121315', overlay: '#191b10', tab: '#121315', glow: '#d4ff4a' },
 };
 

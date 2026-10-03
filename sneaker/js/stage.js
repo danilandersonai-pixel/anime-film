@@ -1,6 +1,6 @@
-// stage.js — сцена v5: ночная улица (street.js), свет только от того, что светит на улице
-// (витрина, натриевый фонарь, неон, молния, фары — как в Blender Cycles), контактная тень,
-// оптика (глубина резкости dof.js, дисторсия, хроматизм) и цвет AgX, как у Cycles.
+// stage.js — сцена роликов: ночная улица v5 (street.js), тёмная студия v6 (studio.js) или мир
+// кристаллов v7 (cavestage.js); свет — в единицах Cycles, контактная тень, оптика (глубина
+// резкости dof.js, дисторсия, хроматизм), цвет AgX, как у Cycles, и кинорамка 2.39:1 для v7.
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -15,17 +15,20 @@ import { VerticalBlurShader } from 'three/addons/shaders/VerticalBlurShader.js';
 import { createStreet, BG_YAW } from './street.js';
 import { DofPass } from './dof.js';
 import { createStudio } from './studio.js';
+import { createCaveStage, caveEnv } from './cavestage.js';
 
 const SHOE_LAYER = 1;
 
 // финальная обработка в экранном пространстве: хроматическая аберрация по краям,
 // мягкая плёночная кривая (приподнятый чёрный, тени холоднее, света теплее),
-// виньетка, зерно сильнее в средних тонах, вспышка, затемнение
+// виньетка, зерно сильнее в средних тонах, вспышка, затемнение, чёрные полосы кинорамки (bars —
+// доля высоты кадра сверху и снизу)
+export const LETTERBOX = 0.5 - (16 / 9) / (2.39 * 2); // 2.39:1 внутри 16:9 — по 12,8 % высоты
 const FinalShader = {
-  uniforms: { tDiffuse: { value: null }, time: { value: 0 }, flash: { value: 0 }, fade: { value: 0 }, vignette: { value: 0.75 }, grain: { value: 0.04 }, aberr: { value: 0.0016 }, distort: { value: -0.012 }, contrast: { value: 0.28 }, aspect: { value: 16 / 9 } },
+  uniforms: { tDiffuse: { value: null }, time: { value: 0 }, flash: { value: 0 }, fade: { value: 0 }, vignette: { value: 0.75 }, grain: { value: 0.04 }, aberr: { value: 0.0016 }, distort: { value: -0.012 }, contrast: { value: 0.28 }, aspect: { value: 16 / 9 }, bars: { value: 0 } },
   vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
   fragmentShader: `
-    uniform sampler2D tDiffuse; uniform float time, flash, fade, vignette, grain, aberr, distort, contrast, aspect; varying vec2 vUv;
+    uniform sampler2D tDiffuse; uniform float time, flash, fade, vignette, grain, aberr, distort, contrast, aspect, bars; varying vec2 vUv;
     float hash(vec2 p){ p = fract(p * vec2(443.897, 441.423)); p += dot(p, p.yx + 19.19); return fract((p.x + p.y) * p.x); }
     void main(){
       vec2 c = vUv - 0.5;
@@ -44,11 +47,13 @@ const FinalShader = {
       col += g * grain * (0.55 + 1.8 * l * (1.0 - l));
       col = mix(col, vec3(1.0), flash);
       col *= 1.0 - fade;
+      if (abs(vUv.y - 0.5) > 0.5 - bars) col = vec3(0.0);
       gl_FragColor = vec4(col, 1.0);
     }`,
 };
 
-// mode: 'street' — ночная улица под дождём (v5), 'studio' — тёмная студия (v6 «Анатомия»)
+// mode: 'street' — ночная улица под дождём (v5), 'studio' — тёмная студия (v6 «Анатомия»),
+// 'cave' — туманный мир кристаллов над тёмной водой (v7 «Кристаллы»)
 export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 1, asphalt, mode = 'street' } = {}) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
   renderer.setPixelRatio(pixelRatio);
@@ -67,8 +72,10 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
   scene.environment = studioEnv(pmrem);
   scene.environmentIntensity = 0.3;
 
-  const STREET = mode === 'street';
-  if (STREET) {
+  const STREET = mode === 'street', CAVE = mode === 'cave';
+  if (CAVE) {
+    scene.environment = caveEnv(pmrem); // холодное небо в тумане и светлое пятно «луны»
+  } else if (STREET) {
     // ---- ночной воздух: дальний асфальт тонет в дымке
     scene.fog = new THREE.FogExp2('#0b0d14', 0.006);
     scene.backgroundBlurriness = 0; // фон резкий — размывает его объектив (dof.js)
@@ -114,8 +121,12 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
     scene.background = bgVis;
   }
 
-  let street = null, studio = null, lights, setLights;
-  if (STREET) {
+  let street = null, studio = null, cave = null, lights, setLights;
+  if (CAVE) {
+    // мир кристаллов: свет, шары и круги на воде задаёт ролик (cave.update)
+    cave = createCaveStage({ scene, width, height, pixelRatio, shadow: { texture: rtShadow.texture, size: SH.size }, shoeLayer: SHOE_LAYER });
+    lights = cave.lights; setLights = cave.setLights;
+  } else if (STREET) {
     // ---- улица: мокрый асфальт с лужами, дождь, огни, машина, туман
     street = createStreet({ scene, width, height, pixelRatio, shadow: { texture: rtShadow.texture, size: SH.size }, asphalt });
     // в отражении не нужны мелкие брызги и туман у самой земли
@@ -201,7 +212,7 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
     camera.aspect = w / h; camera.updateProjectionMatrix();
     composer.setPixelRatio(pr);
     composer.setSize(w, h);
-    street?.setSize(w, h, pr); studio?.setSize(w, h, pr);
+    street?.setSize(w, h, pr); studio?.setSize(w, h, pr); cave?.setSize(w, h, pr);
     for (const t of [accA, accB, ldr]) t.setSize(Math.round(w * pr), Math.round(h * pr));
     bloom.setSize(Math.round(w * pr), Math.round(h * pr));
     dof.setSize(Math.round(w * pr), Math.round(h * pr));
@@ -228,7 +239,7 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
     let acc = null;
     for (let i = 0; i < n; i++) {
       if (setSub) setSub(i);
-      renderContactShadow(3.2);
+      if (!CAVE) renderContactShadow(3.2); // в мире кристаллов кроссовок стоит на камне: тень даёт прожектор
       // глубине резкости нужна глубина кадра, даже если затенение в щелях выключено
       if (!gtao.enabled && dof.enabled) { gtao.overrideVisibility(); gtao.renderOverride(renderer, gtao.normalMaterial, gtao.normalRenderTarget, 0x7777ff, 1.0); gtao.restoreVisibility(); }
       composer.render();
@@ -245,7 +256,7 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
   }
 
   return {
-    renderer, scene, camera, composer, adopt, render, setSize, setEnvironment, street, studio, mode,
+    renderer, scene, camera, composer, adopt, render, setSize, setEnvironment, street, studio, cave, mode,
     lights, setLights, gtao, bloom, dof, final, shadowCam, env,
   };
 }
