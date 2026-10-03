@@ -52,6 +52,10 @@ h1 { margin: 0; font: 800 clamp(30px, 5vw, 54px)/1.02 var(--display); letter-spa
 #play[data-state="playing"] .i-play { display: none; }
 .clock { min-width: 86px; color: var(--muted); font: 600 14px/1 var(--body); font-variant-numeric: tabular-nums; }
 .seek { flex: 1 1 320px; min-width: 0; accent-color: var(--accent); height: 28px; }
+.films { display: inline-flex; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); justify-self: start; }
+.film { height: 38px; padding: 0 18px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font: 700 14px/1 var(--body); cursor: pointer; }
+.film[aria-pressed="true"] { background: var(--fg); color: #0a0b0e; }
+.film:hover:not([aria-pressed="true"]) { color: var(--fg); }
 .cw { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .cw .label { color: var(--muted); font-size: 14px; margin-right: 4px; }
 .chip { display: inline-flex; align-items: center; gap: 10px; height: 40px; padding: 0 14px 0 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--fg); font: 600 14px/1 var(--body); cursor: pointer; }
@@ -64,7 +68,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 body.capture .wrap > :not(.stage) { display: none; }
 body.capture .wrap { padding: 0; max-width: none; }
 body.capture .stage { position: fixed; left: 0; top: 0; width: 1920px; height: 1080px; border-radius: 0; box-shadow: none; }
-body.capture .bigplay, body.capture .hint { display: none; }
+body.capture .bigplay, body.capture .hint, body.capture .films { display: none; }
 </style>
 <script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }</script>
 
@@ -72,10 +76,16 @@ body.capture .bigplay, body.capture .hint { display: none; }
 <body>
 <div class="wrap">
   <header>
-    <p class="eyebrow">Рекламный ролик · 3D в реальном времени · 26 секунд</p>
+    <p class="eyebrow">Рекламные ролики · 3D в реальном времени</p>
     <h1>ORBITA Pulse One</h1>
-    <p class="lede">Ночная улица под ливнем. Кроссовок падает в лужу как твёрдое тело — по законам физики, а светят только витрина, фонарь, неон, фары и молния. Кроссовок, вода, камера, оптика и звук написаны кодом на three.js. Огни города — панорама Шанхая, асфальт и ткань канта — сканы (CC0, Poly Haven).</p>
+    <p class="lede" data-for="street">«Улица», 26 секунд. Ночная улица под ливнем. Кроссовок падает в лужу как твёрдое тело — по законам физики, а светят только витрина, фонарь, неон, фары и молния. Кроссовок, вода, камера, оптика и звук написаны кодом на three.js. Огни города — панорама Шанхая, асфальт и ткань канта — сканы (CC0, Poly Haven).</p>
+    <p class="lede" data-for="anatomy" hidden>«Анатомия», 30 секунд. Тёмная студия: полоса света бежит по поверхности, камера проходит вдоль всего кроссовка, он вращается, разбирается на одиннадцать деталей и шнуруется на глазах — шнурок проходит крест-накрест через все блочки и завязывается бантом.</p>
   </header>
+
+  <div class="films" role="group" aria-label="Ролик">
+    <button class="film" type="button" data-film="street" aria-pressed="true">Улица</button>
+    <button class="film" type="button" data-film="anatomy" aria-pressed="false">Анатомия</button>
+  </div>
 
   <div class="stage" id="stage">
     <canvas id="gl" width="1920" height="1080" aria-label="Рекламный ролик кроссовка ORBITA Pulse One"></canvas>

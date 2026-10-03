@@ -15,7 +15,8 @@ function el(tag, attrs, parent) {
   return e;
 }
 
-export function createCard(svg, accent = '#ff5a1f') {
+// at — когда карточка появляется (v5 — на пэкшоте 23,7 с, v6 — 27,8 с)
+export function createCard(svg, accent = '#ff5a1f', { at = CARD_IN } = {}) {
   svg.innerHTML = '';
   const D = "font-family: Unbounded, 'Arial Black', sans-serif;";
   const B = "font-family: Manrope, 'Segoe UI', Arial, sans-serif;";
@@ -37,8 +38,8 @@ export function createCard(svg, accent = '#ff5a1f') {
   tag.textContent = 'Отрывайся от земли.';
 
   function update(t) {
-    svg.setAttribute('display', t < CARD_IN ? 'none' : 'inline');
-    const a = CARD_IN;
+    svg.setAttribute('display', t < at ? 'none' : 'inline');
+    const a = at;
     // орбита прорисовывается, спутник выходит на неё
     const ko = easeOut(seg(t, a, a + 0.65));
     orbit.setAttribute('stroke-dashoffset', (100 * (1 - ko)).toFixed(2));
@@ -57,7 +58,7 @@ export function createCard(svg, accent = '#ff5a1f') {
     tag.setAttribute('opacity', kg.toFixed(3));
     tag.setAttribute('transform', `translate(0 ${(14 * (1 - kg)).toFixed(1)})`);
     // едва заметный дрейф, чтобы карточка не была «приклеена»
-    const s = 1 + 0.012 * seg(t, a, 26);
+    const s = 1 + 0.012 * seg(t, a, a + 2.3);
     drift.setAttribute('transform', `translate(150 860) scale(${s.toFixed(4)}) translate(-150 -860)`);
   }
   return { update };

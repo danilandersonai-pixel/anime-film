@@ -1,4 +1,4 @@
-// Рендер ролика в MP4 со звуком: node tools/render.cjs [out.mp4] [--fps 24] [--audio-only]
+// Рендер ролика в MP4 со звуком: node tools/render.cjs [out.mp4] [--fps 24] [--audio-only] [--film anatomy]
 // Каждый кадр рисует невидимый Chromium (WebGL), ffmpeg собирает видео,
 // звук синтезирует тот же audio5.js (OfflineAudioContext) и выравнивается до −14 LUFS.
 const fs = require('fs'), path = require('path'), os = require('os');
@@ -19,7 +19,8 @@ function loudness(file) {
   const fps = Number(arg('--fps', 24));
   fs.mkdirSync(path.dirname(out), { recursive: true });
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'orbita-'));
-  const { browser, page, srv, errors } = await openPage('index.html', { width: 1920, height: 1080, query: '?capture' });
+  const film = arg('--film', '');
+  const { browser, page, srv, errors } = await openPage('index.html', { width: 1920, height: 1080, query: '?capture' + (film ? '&film=' + film : '') + (process.env.Q || '') });
   await page.waitForFunction(() => window.__ad && window.__ad.ready === true, null, { timeout: 180000 });
   const dur = await page.evaluate(() => window.__ad.duration);
 
