@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>Пост-продакшн v6</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400..800&family=Unbounded:wght@400..800&display=swap">
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }</script>
+<style>
+  html, body { margin: 0; background: transparent; }
+  #ov { position: relative; width: 1920px; height: 1080px; }
+  #ov svg { position: absolute; inset: 0; width: 1920px; height: 1080px; }
+</style>
+</head><body>
+<!-- Пост-продакшн v6 «Анатомия»: звук (audio6.js), подписи деталей (labels6.js) и карточка (card5.js)
+     поверх кадров Cycles. Где детали на экране — из frames6.json (их посчитал three.js при выгрузке). -->
+<div id="ov"><svg id="labels" viewBox="0 0 1920 1080"></svg><svg id="card" viewBox="0 0 1920 1080"></svg></div>
+<script type="module">
+  import { createCard } from './js/card5.js';
+  import { createLabels } from './js/labels6.js';
+  import { PARTS } from './js/anatomy.js';
+  import { CARD6 } from './js/timeline6.js';
+  import { renderTrack6, LENGTH6 } from './js/audio6.js';
+  import { toWav } from './js/audio5.js';
+  await Promise.all(['600 36px Unbounded', '800 104px Unbounded', '600 42px Manrope', '600 27px Manrope'].map((f) => document.fonts.load(f, 'ORBITA PULSE Отрывайся Подмётка'))).catch(() => {});
+  const FR = (await (await fetch('out/cycles6/frames6.json')).json()).frames;
+  const card = createCard(document.getElementById('card'), '#ff5a1f', { at: CARD6 });
+  const labels = createLabels(document.getElementById('labels'), PARTS);
+  window.__post = {
+    length: LENGTH6, frames: FR.length,
+    // кадр f: подписи (если видны) и карточка; true — в кадре что-то есть
+    overlay: (f) => {
+      const F = FR[f], t = F.t;
+      card.update(t);
+      if (F.labels) labels.update(t, F.labels.amount, F.labels.pts, F.labels.cx); else labels.update(t, 0, {});
+      return !!F.labels || F.card > 0 || t >= CARD6;
+    },
+    wav: async () => {
+      const bytes = new Uint8Array(toWav(await renderTrack6(48000)));
+      let s = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      return btoa(s);
+    },
+    ready: true,
+  };
+</script>
+</body></html>

@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>Экспорт «Анатомии» в Cycles</title>
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }</script>
+</head><body>
+<p>Экспорт v6 «Анатомия» для Blender Cycles…</p>
+<script type="module">
+  import { exportAnatomy } from './js/export6.js';
+  window.__exp = await exportAnatomy({ glb: !new URLSearchParams(location.search).has('framesOnly') });
+  window.__ready = true;
+</script>
+</body></html>

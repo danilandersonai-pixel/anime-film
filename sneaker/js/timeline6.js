@@ -105,7 +105,7 @@ const SHOT_FN = {
     S.cam = { pos, target: tgt, fov: 34, roll: 0.035, fstop: 4, focus: dist3(pos, P) };
     // полоса света ходит туда-обратно через кадр: дважды проходит по поверхности
     const ul = clamp(u + 0.22 * Math.cos(Math.PI * (t - 3) / 2), 0.02, 0.98), L = sidePoint(ul, 0.45);
-    S.light = { key: 0.22, rimL: 2.5, rimR: 2.5, top: 0, env: 0.03, sweep: bar([L.p[0] + L.n[0] * 1.3, L.p[1] + 0.7, L.p[2] + L.n[2] * 1.3], [L.p[0], L.p[1], L.p[2]], 0.12, 1.6, 40) };
+    S.light = { key: 0.45, rimL: 2.5, rimR: 2.5, top: 0, env: 0.05, sweep: bar([L.p[0] + L.n[0] * 1.3, L.p[1] + 0.7, L.p[2] + L.n[2] * 1.3], [L.p[0], L.p[1], L.p[2]], 0.12, 1.6, 60) };
   },
   // ---- 7–9: отъезд от носка; кроссовок делает оборот и поднимается в воздух
   spin(t, S) {
@@ -157,7 +157,7 @@ const SHOT_FN = {
     S.cam = { pos: C.pos, target: C.target, fov: 32, roll: -0.03, fstop: 5.6, focus: null };
     // свет идёт вслед за шнурком: узкая полоса над подъёмом
     const x = C.target[0];
-    S.light = { key: 0.22, rimL: 4, rimR: 5, top: 0, env: 0.05, sweep: bar([x - 0.2, 2.2, 1.4], [x, 0.8, 0], 1.6, 0.14, 26) };
+    S.light = { key: 0.36, rimL: 4, rimR: 5, top: 0, env: 0.06, sweep: bar([x - 0.2, 2.2, 1.4], [x, 0.8, 0], 1.6, 0.14, 20) };
   },
   // ---- 24–27,5: оборот на 360° у самого пола, полоса света проходит спереди
   hero(t, S) {

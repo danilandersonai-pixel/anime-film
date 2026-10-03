@@ -14,10 +14,11 @@ import { buildCar } from './car.js';
 
 
 // InstancedMesh → обычная геометрия (у Blender своя система экземпляров, проще запечь)
-function bakeInstances(root) {
+export function bakeInstances(root) {
   const list = [];
   root.traverse((o) => { if (o.isInstancedMesh) list.push(o); });
   for (const im of list) {
+    if (!im.visible) { im.parent.remove(im); continue; } // спрятанное (например, капли в сухой студии) не выгружается
     const geos = [], m = new THREE.Matrix4();
     const base = im.geometry.index ? im.geometry.toNonIndexed() : im.geometry.clone();
     for (const k of Object.keys(base.attributes)) if (!['position', 'normal', 'uv'].includes(k)) base.deleteAttribute(k);
@@ -30,10 +31,10 @@ function bakeInstances(root) {
   }
 }
 
-function exportGLB(obj) {
+export function exportGLB(obj) {
   return new Promise((res, rej) => new GLTFExporter().parse(obj, (buf) => res(buf), rej, { binary: true, onlyVisible: true, maxTextureSize: 2048 }));
 }
-const b64 = (buf) => { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
+export const b64 = (buf) => { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
 
 // машина за кроссовком — та же модель, что в плеере
 export async function exportCar() {

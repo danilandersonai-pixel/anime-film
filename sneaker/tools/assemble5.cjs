@@ -1,4 +1,5 @@
-// Сборка ролика v5: node tools/assemble5.cjs [out.mp4] [--frames out/cycles/frames] [--post out/v5] [--lite]
+// Сборка ролика из кадров Cycles: node tools/assemble5.cjs [out.mp4] [--frames out/cycles/frames] [--post out/v5] [--lite]
+//   [--dur 26 --fade-in 0.45 --fade-out 25.35:0.65 --name orbita-pulse-one-v5] — для «Анатомии»: --dur 30 --fade-in 0.4 --fade-out 29.35:0.65
 // Кадры Cycles (1280×720) → апскейл до 1920×1080 → финальная карточка → плёночное зерно,
 // мягкая виньетка → появление из чёрного и затухание → звук (уже −14 LUFS).
 // --lite — лёгкая копия 1280×720 для отправки в чат.
@@ -6,11 +7,11 @@ const fs = require('fs'), path = require('path');
 const { execFileSync } = require('child_process');
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
 
-const lite = process.argv.includes('--lite');
-const out = path.resolve(process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : (lite ? 'out/orbita-pulse-one-v5-lite.mp4' : 'out/orbita-pulse-one-v5.mp4'));
+const lite = process.argv.includes('--lite'), name = arg('--name', 'orbita-pulse-one-v5');
+const out = path.resolve(process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : `out/${name}${lite ? '-lite' : ''}.mp4`);
 const frames = path.resolve(arg('--frames', 'out/cycles/frames'));
 const post = path.resolve(arg('--post', 'out/v5'));
-const FPS = 24, DUR = 26, FADE_IN = 0.45, FADE_OUT = [25.35, 0.65];
+const FPS = 24, DUR = Number(arg('--dur', 26)), FADE_IN = Number(arg('--fade-in', 0.45)), FADE_OUT = arg('--fade-out', '25.35:0.65').split(':').map(Number);
 
 const n = fs.readdirSync(frames).filter((f) => /^f\d{4}\.png$/.test(f)).length;
 if (n < Math.round(DUR * FPS) + 1) console.log(`ВНИМАНИЕ: кадров ${n} из ${Math.round(DUR * FPS) + 1} — ролик выйдет короче`);
