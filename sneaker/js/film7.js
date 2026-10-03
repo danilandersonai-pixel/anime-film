@@ -45,6 +45,6 @@ export async function createFilm7({ stage, hero, layers }) {
       S.shoe = { pos: [0, ISLAND_TOP, 0], yaw: 0, pitch: 0, roll: 0, pivot: null, squash: 0 };
       return S;
     },
-    exploreTarget: [0, ISLAND_TOP + 0.5, 0], explorePos: [3.4, ISLAND_TOP + 1.2, 4.6],
+    exploreTarget: [0, ISLAND_TOP + 0.5, 0], explorePos: [0.6, ISLAND_TOP + 0.9, 5.0],   // спереди: шары не заслоняют кроссовок
   };
 }
