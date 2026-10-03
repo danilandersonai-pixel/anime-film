@@ -118,8 +118,8 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
     origBefore.call(this, r, s, c);
     hideInReflection.forEach((o, i) => (o.visible = st[i]));
   };
-  // дождь, брызги, туман и спрайты — не твёрдые тела: их не должно быть в буферах глубины
-  for (const o of [street.rain, street.splashes, street.mist, street.traffic, street.car]) o.traverse((x) => { x.userData.soft = true; });
+  // дождь, брызги и туман — не твёрдые тела: их не должно быть в буферах глубины
+  for (const o of [street.rain, street.splashes, street.mist]) o.traverse((x) => { x.userData.soft = true; });
 
   // ---- свет: только то, что светит на ночной улице. Яркости — в тех же единицах, что в Cycles:
   // площадной — яркость поверхности P/(πA), прожектор — сила света P/(4π), солнце — освещённость.

@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { Reflector } from 'three/addons/objects/Reflector.js';
 import { rng } from './textures.js';
+import { buildCar, HEAD_LIGHT, CAR } from './car.js';
 
 const TILE = 15;          // скан 3 × 3 м уложен плиткой 1,5 м: зерно асфальта мельче и чётче вблизи
 export const PUDDLE = { x: 0.2, z: 0.15, r2: 7.5 }; // лужа вокруг кроссовка
@@ -230,21 +231,6 @@ function makeSplashes(N = 700) {
   return mesh;
 }
 
-// огонёк: маленькое мягкое пятно; в боке его разворачивает глубина резкости
-function dotTexture() {
-  const c = document.createElement('canvas'); c.width = c.height = 64;
-  const x = c.getContext('2d'), g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
-  g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.35, 'rgba(255,255,255,0.55)'); g.addColorStop(1, 'rgba(255,255,255,0)');
-  x.fillStyle = g; x.fillRect(0, 0, 64, 64);
-  return new THREE.CanvasTexture(c);
-}
-
-function glowSprite(tex, color, scale) {
-  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, color, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, fog: false }));
-  s.scale.set(scale, scale, 1);
-  return s;
-}
-
 // низкий туман: полупрозрачные полосы на разной глубине, шум медленно плывёт
 function makeMist() {
   const group = new THREE.Group();
@@ -344,30 +330,27 @@ export function createStreet({ scene, width, height, pixelRatio, shadow, asphalt
   const mist = makeMist(); scene.add(mist);
   const debris = makeDebris(); scene.add(debris);
 
-  // Огни — маленькие яркие точки с HDR-яркостью: в боке их превращает объектив
-  // (глубина резкости в stage.js), как на настоящей съёмке, а не нарисованные диски.
-  const dot = dotTexture();
-  // живой фон: далёкие машины на двух улицах за кроссовком — фары и стоп-сигналы плывут в боке
+  // живой фон: далёкие машины на двух улицах за кроссовком — силуэты с фарами плывут в боке
   const traffic = new THREE.Group(), r = rng(515), TR = [];
-  for (let i = 0; i < 14; i++) {
-    const far = i % 2, dir = r() < 0.5 ? 1 : -1, z = far ? -118 - r() * 10 : -72 - r() * 6;
-    const head = glowSprite(dot, new THREE.Color('#fff1dc').multiplyScalar(1.4 + 1.2 * r()), 0.9);
-    const tail = glowSprite(dot, new THREE.Color('#ff2414').multiplyScalar(1.1 + 0.9 * r()), 0.8);
-    traffic.add(head, tail);
-    TR.push({ head, tail, dir, z, y: 5.5 + r() * 1.5, v: 70 + r() * 90, x0: r() * 360 });
+  const PAINTS = ['#8a929c', '#1d2026', '#5c0f12', '#d8d9db', '#26324a'];
+  for (let i = 0; i < 8; i++) {
+    const far = i % 2, dir = r() < 0.5 ? 1 : -1;
+    const c = buildCar({ paint: PAINTS[i % PAINTS.length] });
+    c.materials.head.emissiveIntensity = 12; c.materials.tail.emissiveIntensity = 6;
+    c.root.rotation.y = dir > 0 ? 0 : Math.PI;
+    traffic.add(c.root);
+    TR.push({ root: c.root, dir, z: far ? -118 - r() * 10 : -74 - r() * 5, v: 70 + r() * 90, x0: r() * 360 });
   }
   scene.add(traffic);
 
-  // машина за кроссовком (как в Cycles): две фары, два стоп-сигнала, свет фар — прожектор с тенью
-  const car = new THREE.Group();
-  const heads = [-0.8, 0.8].map((o) => { const s = glowSprite(dot, new THREE.Color('#fff4e2').multiplyScalar(40), 1.6); s.userData.o = o; car.add(s); return s; });
-  const tails = [-0.8, 0.8].map((o) => { const s = glowSprite(dot, new THREE.Color('#ff1a0a').multiplyScalar(30), 1.3); s.userData.o = o; car.add(s); return s; });
+  // машина за кроссовком (как в Cycles): кузов, фары и фонари; свет фар — прожектор вперёд по ходу
+  const carM = buildCar(), car = carM.root;
   scene.add(car);
-  const carLight = new THREE.SpotLight('#fff1dc', 0, 0, 0.35, 0.5, 2);
+  const carLight = new THREE.SpotLight('#fff1dc', 0, 0, THREE.MathUtils.degToRad(50), 0.9, 2);
   carLight.castShadow = true; carLight.shadow.mapSize.set(1024, 1024); carLight.shadow.bias = -0.0004;
-  carLight.shadow.camera.near = 20; carLight.shadow.camera.far = 90; carLight.shadow.focus = 0.4;
-  carLight.target.position.set(0, 0.4, 0);
+  carLight.shadow.camera.near = 5; carLight.shadow.camera.far = 140;
   scene.add(carLight, carLight.target);
+  const headWorld = new THREE.Vector3();
 
   // молния: холодный свет сверху
   const sky = new THREE.DirectionalLight('#c9d8ff', 0);
@@ -402,24 +385,24 @@ export function createStreet({ scene, width, height, pixelRatio, shadow, asphalt
     mist.userData.mat.uniforms.uT.value = S.t; mist.userData.mat.uniforms.uAmt.value = 0.015 + 0.05 * L.lightning;
     mist.children.forEach((m) => { m.rotation.y = Math.atan2(S.cam.pos[0] - m.position.x, S.cam.pos[2] - m.position.z) * 0.6; });
     // далёкие машины едут всё время ролика
-    for (const c of TR) {
-      const x = ((c.x0 + c.v * S.t) % 360) - 180, X = c.dir * x;
-      c.head.position.set(X, c.y, c.z); c.tail.position.set(X - c.dir * 40, c.y - 0.4, c.z - 1);
-    }
-    // машина за кроссовком: те же координаты, что в Cycles
+    for (const c of TR) c.root.position.set(c.dir * (((c.x0 + c.v * S.t) % 360) - 180), 0, c.z);
+    // машина за кроссовком: фары там же, где в Cycles; прожектор светит вперёд и чуть вниз
     const c = st.car;
     car.visible = c.on > 0;
     if (car.visible) {
-      const x = c.dir * (c.p * 130 - 65) * 1.3;
-      heads.forEach((s) => s.position.set(x, 6.4, -48 + s.userData.o * 7));
-      tails.forEach((s) => s.position.set(x - c.dir * 40, 6.0, -50 + s.userData.o * 7));
-      carLight.position.copy(heads[1].position);
-      carLight.intensity = 2600;
+      const xh = c.dir * (c.p * 130 - 65) * 1.3;               // x передних фар
+      car.position.set(xh - c.dir * CAR.nose, 0, -48);
+      car.rotation.y = c.dir > 0 ? 0 : Math.PI;
+      car.updateMatrixWorld(true);
+      headWorld.set(...HEAD_LIGHT).applyMatrix4(car.matrixWorld);
+      carLight.position.copy(headWorld);
+      carLight.target.position.set(headWorld.x + c.dir * 30, 0.5, headWorld.z + 6);
+      carLight.intensity = 477;
       carLight.shadow.autoUpdate = true;
     } else { carLight.intensity = 0; carLight.shadow.autoUpdate = false; }
     sky.intensity = L.lightning * 3.5;
   }
-  const carHead = () => (car.visible ? heads[1].position : null);
+  const carHead = () => (car.visible ? headWorld : null);
 
   function setSize(w, h, pr) { reflector.getRenderTarget().setSize(Math.round(w * pr * 0.5), Math.round(h * pr * 0.5)); }
 

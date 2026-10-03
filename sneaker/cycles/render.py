@@ -1,6 +1,6 @@
 """Рендер монтажа v5 в Blender Cycles (трассировка лучей).
 
-Сцену собирает этот скрипт: кроссовки и камешки — из GLB, которые выгрузил
+Сцену собирает этот скрипт: кроссовки, машина и камешки — из GLB, которые выгрузил
 three.js (tools/export-cycles.cjs), движение — из frames.json, всё остальное
 (мокрый асфальт с лужами и рябью, город, свет, дождь, брызги) — здесь.
 
@@ -271,26 +271,42 @@ sun_d = bpy.data.lights.new('lightning', 'SUN'); sun_d.angle = math.radians(8); 
 sky = bpy.data.objects.new('lightning', sun_d); sc.collection.objects.link(sky)
 sky.rotation_euler = (math.radians(35), math.radians(10), math.radians(-30))
 
-# фары: прожекторы + видимые светящиеся «стёкла» (их размоет объектив в боке)
-def emissive(name, color, strength):
-    m = bpy.data.materials.new(name); m.use_nodes = True
-    t = NB(m.node_tree)
-    for n in list(t.N):
-        if n.type != 'OUTPUT_MATERIAL':
-            t.N.remove(n)
-    e = t.n('ShaderNodeEmission', Color=color, Strength=strength)
-    t.L.new(e.outputs[0], next(n for n in t.N if n.type == 'OUTPUT_MATERIAL').inputs['Surface'])
-    return m, e
-headM, headE = emissive('headlight', (1, 0.93, 0.82, 1), 0)
-tailM, tailE = emissive('taillight', (1, 0.08, 0.04, 1), 0)
-car = {'heads': [], 'tails': [], 'spots': []}
-for o_ in (-0.8, 0.8):
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.45, segments=16, ring_count=8)
-    h = bpy.context.active_object; h.data.materials.append(headM); h.visible_shadow = False; car['heads'].append(h)
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.35, segments=16, ring_count=8)
-    tl = bpy.context.active_object; tl.data.materials.append(tailM); tl.visible_shadow = False; car['tails'].append(tl)
-    sd = bpy.data.lights.new('head', 'SPOT'); sd.spot_size = math.radians(40); sd.spot_blend = 0.5; sd.shadow_soft_size = 0.6; sd.color = (1, 0.93, 0.82)
+# машина за кроссовком: кузов, стёкла, колёса, фары и фонари — модель из three.js (js/car.js);
+# свет фар — два прожектора чуть впереди носа, светят вперёд по ходу и немного вбок
+CAR_NOSE, CAR_HEAD = 22.4, (23.6, 6.9, 5.0)   # как CAR.nose и HEAD_LIGHT в car.js
+CAR_ROOT, CAR_EM = None, {}
+if os.path.exists(os.path.join(A.data, 'car.glb')):
+    car_objs = import_glb(os.path.join(A.data, 'car.glb'))
+    CAR_ROOT = next(o for o in car_objs if o.name.split('.')[0] == 'car')
+    for o in car_objs:
+        if o.type != 'MESH':
+            continue
+        for slot in o.material_slots:
+            m = slot.material; b_ = principled(m)
+            if not b_:
+                continue
+            base = m.name.split('.')[0]
+            if base == 'car_paint':                              # металлик под лаком
+                b_.inputs['Metallic'].default_value = 0.55; b_.inputs['Roughness'].default_value = 0.32
+                b_.inputs['Coat Weight'].default_value = 1.0; b_.inputs['Coat Roughness'].default_value = 0.03
+            elif base == 'car_glass':                            # тонированное стекло: чёрное зеркало
+                b_.inputs['Base Color'].default_value = (0.002, 0.002, 0.003, 1); b_.inputs['Roughness'].default_value = 0.02
+                b_.inputs['Coat Weight'].default_value = 1.0; b_.inputs['Coat Roughness'].default_value = 0.0
+            elif base in ('car_head', 'car_tail'):
+                b_.inputs['Base Color'].default_value = (0, 0, 0, 1)
+                b_.inputs['Emission Color'].default_value = (1, 0.95, 0.88, 1) if base == 'car_head' else (1, 0.09, 0.03, 1)
+                CAR_EM[base] = b_.inputs['Emission Strength']
+car = {'spots': []}
+for o_ in (1, -1):
+    sd = bpy.data.lights.new('head', 'SPOT'); sd.spot_size = math.radians(100); sd.spot_blend = 0.9; sd.shadow_soft_size = 0.6; sd.color = (1, 0.93, 0.82)
     so = bpy.data.objects.new('head', sd); sc.collection.objects.link(so); car['spots'].append(so)
+
+def car_matrix(c):
+    """мировая матрица машины в осях three.js: нос по ходу движения, фары там же, где в плеере"""
+    if c['on'] <= 0:
+        return Matrix.Translation((0, -400, 0))                # машины нет в кадре — под землёй
+    xh = c['dir'] * (c['p'] * 130 - 65) * 1.3
+    return Matrix.Translation((xh - c['dir'] * CAR_NOSE, 0, -48)) @ Matrix.Rotation(0 if c['dir'] > 0 else math.pi, 4, 'Y')
 
 # ---------------------------------------------------------------------
 # Дождь: тонкие водяные нити (стекло n = 1,33) — видны, только когда за ними свет,
@@ -411,15 +427,17 @@ for fi, F in enumerate(FR):
         r = shoes[cw]['root']
         r.matrix_world = Matrix.Translation(v3(rest['pos'][0] + dx_, rest['pos'][1] + 0.024, dz_))
         r.keyframe_insert('location', frame=f)
+    if CAR_ROOT:
+        key_matrix(CAR_ROOT, C @ car_matrix(F['car']) @ CI, f)
 # ключи — ступенчатые там, где нужна склейка (камера перескакивает между планами)
-for o in [cam, cd] + [shoes['ember']['root']] + list(shoes['ember']['groups'].values()):
+for o in [cam, cd] + [shoes['ember']['root']] + list(shoes['ember']['groups'].values()) + ([CAR_ROOT] if CAR_ROOT else []):
     ad = o.animation_data
     if ad and ad.action:
         for fc in ad.action.fcurves:
             for kp in fc.keyframe_points:
                 kp.interpolation = 'LINEAR'
 cuts = {i + 1 for i in range(1, len(FR)) if FR[i]['shot'] != FR[i - 1]['shot']}
-for o in [cam, cd, shoes['ember']['root']] + list(shoes['ember']['groups'].values()):
+for o in [cam, cd, shoes['ember']['root']] + list(shoes['ember']['groups'].values()) + ([CAR_ROOT] if CAR_ROOT else []):
     if not (o.animation_data and o.animation_data.action):
         continue
     for fc in o.animation_data.action.fcurves:
@@ -459,14 +477,15 @@ def apply_frame(F):
     WORLD_STRENGTH.default_value = 0.17 * L['env'] * (1 + 5 * L['lightning'])
     c = F['car']
     on = c['on'] > 0
-    x = c['dir'] * (c['p'] * 130 - 65)
-    for i, o_ in enumerate((-0.8, 0.8)):
-        h, tl, sp = car['heads'][i], car['tails'][i], car['spots'][i]
-        h.location = v3(x * 1.3, 6.4, -48 + o_ * 7); tl.location = v3(x * 1.3 - c['dir'] * 40, 6.0, -50 + o_ * 7)
-        sp.location = h.location; look_at(sp, v3(0, 0.4, 0))
+    Mc = car_matrix(c)
+    for i, s_ in enumerate((1, -1)):
+        sp = car['spots'][i]
+        p = Mc @ Vector((CAR_HEAD[0], CAR_HEAD[1], s_ * CAR_HEAD[2]))   # в осях three.js
+        sp.location = v3(p.x, p.y, p.z); look_at(sp, v3(p.x + c['dir'] * 30, 0.5, p.z + 6))
         sp.data.energy = 6000 if on else 0
-    headE.inputs['Strength'].default_value = 90 if on else 0
-    tailE.inputs['Strength'].default_value = 120 if on else 0
+    if 'car_head' in CAR_EM:
+        CAR_EM['car_head'].default_value = 35 if on else 0
+        CAR_EM['car_tail'].default_value = 14 if on else 0
     RAIN_T_NODE.outputs[0].default_value = F['rainT']
     RAIN_A_NODE.outputs[0].default_value = F['rain']
     rings = sorted(F['rings'], key=lambda r: r[2])[:8]

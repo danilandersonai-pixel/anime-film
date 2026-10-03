@@ -10,6 +10,7 @@ import { evaluate5, setRig5, DURATION5, IMPACTS, REST, SIM } from './timeline5.j
 import { makeDebris } from './street.js';
 import { splashAt } from './splash5.js';
 import { dripsAt } from './drips5.js';
+import { buildCar } from './car.js';
 
 
 // InstancedMesh → обычная геометрия (у Blender своя система экземпляров, проще запечь)
@@ -34,6 +35,13 @@ function exportGLB(obj) {
 }
 const b64 = (buf) => { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
 
+// машина за кроссовком — та же модель, что в плеере
+export async function exportCar() {
+  const car = buildCar();
+  car.root.updateMatrixWorld(true);
+  return b64(await exportGLB(car.root));
+}
+
 // glb = false — только покадровое состояние (frames.json), без геометрии
 export async function exportAll({ glb = true } = {}) {
   let jersey = null; try { jersey = await scans(); } catch (e) { /* без скана */ }
@@ -53,6 +61,7 @@ export async function exportAll({ glb = true } = {}) {
   }
   // камешки и листья на асфальте
   if (glb) {
+    out.glb.car = await exportCar();
     const debris = makeDebris(); debris.name = 'debris';
     bakeInstances(debris); debris.updateMatrixWorld(true);
     out.glb.debris = b64(await exportGLB(debris));

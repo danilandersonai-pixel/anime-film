@@ -9,7 +9,7 @@ import * as THREE from 'three';
 export function createWaterMaterial({ surface = false, tint = '#e8f2ff' } = {}) {
   const U = {
     tEnv: { value: null }, uRot: { value: new THREE.Matrix3() }, uEnv: { value: 0.06 },
-    uRefract: { value: surface ? 0 : 1 }, uTint: { value: new THREE.Color(tint) },
+    uRefract: { value: surface ? 0 : 1 }, uSpec: { value: surface ? 0.3 : 1 }, uTint: { value: new THREE.Color(tint) },
     uLP: { value: Array.from({ length: 4 }, () => new THREE.Vector4()) },  // позиция, острота блика
     uLC: { value: Array.from({ length: 4 }, () => new THREE.Color(0, 0, 0)) },
   };
@@ -29,7 +29,7 @@ export function createWaterMaterial({ surface = false, tint = '#e8f2ff' } = {}) 
         gl_Position = projectionMatrix * viewMatrix * w;
       }`,
     fragmentShader: `
-      uniform sampler2D tEnv; uniform mat3 uRot; uniform float uEnv, uRefract; uniform vec3 uTint;
+      uniform sampler2D tEnv; uniform mat3 uRot; uniform float uEnv, uRefract, uSpec; uniform vec3 uTint;
       uniform vec4 uLP[4]; uniform vec3 uLC[4];
       varying vec3 vW, vN, vC;
       vec3 env(vec3 d){
@@ -55,7 +55,7 @@ export function createWaterMaterial({ surface = false, tint = '#e8f2ff' } = {}) 
         vec3 col = through * uTint * (1.0 - F) * uRefract + refl * F;
         for (int k = 0; k < 4; k++) {
           vec3 L = normalize(uLP[k].xyz - vW);
-          col += uLC[k] * pow(max(dot(R, L), 0.0), uLP[k].w) * (0.25 + F);
+          col += uLC[k] * pow(max(dot(R, L), 0.0), uLP[k].w) * (0.25 + F) * uSpec;
         }
         gl_FragColor = vec4(col, 1.0);
       }`,

@@ -44,7 +44,8 @@ export class DofPass extends Pass {
         }`,
     }));
     // 1б) плитки 16×16: самый большой кружок в округе — до какого радиуса собирать
-    this.rtTile = new THREE.WebGLRenderTarget(1, 1, { ...half, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+    // плитки читаются с линейной фильтрацией: шаг выборки меняется плавно, без «ступенек» на границах
+    this.rtTile = new THREE.WebGLRenderTarget(1, 1, { ...half, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
     this.tile = new FullScreenQuad(new THREE.ShaderMaterial({
       uniforms: { tPre: { value: null }, uTexel: { value: new THREE.Vector2() } },
       vertexShader: VS, depthTest: false, depthWrite: false,
