@@ -4,6 +4,8 @@
 // фары, молния. Из надписей — только финальная карточка.
 // evaluate5(t) → состояние кадра; одинаковое t даёт одинаковый кадр.
 import { simulateDrop, sampleDrop, COM } from './physics.js';
+import * as THREE from 'three';
+import { shoeTransform, last, soleBottom } from './shoe.js';
 
 export const DURATION5 = 26;
 export const SHOTS5 = {
@@ -46,6 +48,12 @@ function rootFromSim(p) {
   return { pos: [DROP_SPOT[0] + p.x - (c * COM[0] - s * COM[1]), p.y - (s * COM[0] + c * COM[1]) - BASE_Y, DROP_SPOT[1]], pitch: p.th };
 }
 export const REST = rootFromSim(sampleDrop(SIM, 2.5));
+// куда наводится резкость в плане drip: середина ряда капель на кромке подошвы (drips5.js)
+const DRIP_FOCUS = (() => {
+  const u = 0.8, L = last(u, 0.035);
+  const { pos, quat } = shoeTransform({ pos: REST.pos, yaw: -0.18, pitch: REST.pitch, roll: 0, pivot: null });
+  return new THREE.Vector3(L.x, soleBottom(u) - 0.007, L.c + L.hw + 0.061).applyQuaternion(quat).add(pos).toArray();
+})();
 
 // Время действия: рапид ×0,2 на ударе (как съёмка 120 к/с), потом разгон обратно
 const WARP_DT = 1 / 480, WARP = new Float32Array(Math.ceil(27 / WARP_DT) + 2);
@@ -164,8 +172,10 @@ const SHOT_FN = {
   // ---- 15–17: край подошвы у воды: срываются капли
   drip(t, S) {
     const k = easeInOut(seg(t, 15, 17));
-    const c = [REST.pos[0] + 0.5, 0.12, 0.42];
-    S.cam = { pos: mix3([1.6, 0.13, 1.55], [1.35, 0.14, 1.45], k), target: c, fov: 28, roll: 0.02, fstop: 2.8, focus: dist3([1.5, 0.13, 1.5], c) };
+    // камера смотрит вдоль кромки, где рокер поднял носок над водой, и медленно подъезжает
+    const c = add3(DRIP_FOCUS, [-0.05, 0.035, 0]);
+    const pos = add3(c, mix3([0.55, 0.02, 0.88], [0.46, 0.025, 0.76], k));
+    S.cam = { pos, target: c, fov: 28, roll: 0.02, fstop: 4, focus: dist3(pos, DRIP_FOCUS) }; // резкость — на каплях
     S.shoe.yaw = -0.18; S.drip = 1;
   },
   // ---- 17–19: сверху: кроссовок в луже, круги от капель вокруг; камера медленно поворачивается

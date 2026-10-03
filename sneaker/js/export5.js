@@ -34,7 +34,8 @@ function exportGLB(obj) {
 }
 const b64 = (buf) => { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
 
-export async function exportAll() {
+// glb = false — только покадровое состояние (frames.json), без геометрии
+export async function exportAll({ glb = true } = {}) {
   let jersey = null; try { jersey = await scans(); } catch (e) { /* без скана */ }
   const out = { glb: {}, frames: [], meta: {} };
   const shoes = {};
@@ -46,14 +47,16 @@ export async function exportAll() {
     shoe.root.name = 'shoe_' + cw;
     for (const [k, g] of Object.entries(shoe.groups)) g.name = cw + '_' + k;
     shoe.root.updateMatrixWorld(true);
-    out.glb[cw] = b64(await exportGLB(shoe.root));
+    if (glb) out.glb[cw] = b64(await exportGLB(shoe.root));
     shoes[cw] = shoe;
     if (cw === 'ember') setRig5(shoe.macro);
   }
   // камешки и листья на асфальте
-  const debris = makeDebris(); debris.name = 'debris';
-  bakeInstances(debris); debris.updateMatrixWorld(true);
-  out.glb.debris = b64(await exportGLB(debris));
+  if (glb) {
+    const debris = makeDebris(); debris.name = 'debris';
+    bakeInstances(debris); debris.updateMatrixWorld(true);
+    out.glb.debris = b64(await exportGLB(debris));
+  }
   // покадровое состояние
   const fps = 24, n = Math.round(DURATION5 * fps), cam = new THREE.PerspectiveCamera(28, 16 / 9, 0.05, 400);
   const hero = shoes.ember;

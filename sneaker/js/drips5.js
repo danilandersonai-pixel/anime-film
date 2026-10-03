@@ -9,8 +9,9 @@ const G = 98;
 export const DRIPS = (() => {
   const r = rng(77), out = [];
   for (let i = 0; i < 22; i++) {
-    const u = 0.45 + 0.5 * r(), L = last(u, 0.03);
-    out.push({ local: [L.x, soleBottom(u) + 0.03 + r() * 0.1, L.lat + 0.005], t0: 15 + r() * 2, grow: 0.6 + r() * 0.8, rad: 0.008 + 0.008 * r() });
+    // висят на нижней наружной кромке подошвы (там собирается вода), видимой в кадре
+    const u = 0.68 + 0.22 * r(), L = last(u, 0.035); // там, где рокер поднимает подошву над водой
+    out.push({ local: [L.x, soleBottom(u) - 0.012 + 0.01 * r(), L.c + L.hw + 0.058 + 0.006 * r()], t0: 15 + r() * 2, grow: 0.6 + r() * 0.8, rad: 0.016 + 0.012 * r() });
   }
   return out;
 })();

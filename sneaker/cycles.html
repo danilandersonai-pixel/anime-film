@@ -6,7 +6,7 @@
 <script type="module">
   import { exportAll } from './js/export5.js';
   await document.fonts.load('600 34px Unbounded').catch(() => {});
-  window.__exp = await exportAll();
+  window.__exp = await exportAll({ glb: !new URLSearchParams(location.search).has('framesOnly') });
   window.__ready = true;
 </script>
 </body></html>
