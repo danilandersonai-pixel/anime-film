@@ -135,10 +135,12 @@ const SHOT_FN = {
   // ---- 16,2–17: наезд на карбоновую пластину между слоями пены; блик бежит по плетению
   plate(t, S) {
     const k = ease(seg(t, 16.2, 17)), P = PLATE_AT();
-    const from = orbit([0, 1.75, 0], 0.38, 6.2, 1.7), to = add3(P, [Math.sin(0.38) * 1.25, 0.5, Math.cos(0.38) * 1.25]); // сверху-сбоку: видно плетение карбона
-    S.cam = { pos: mix3(from, to, k), target: P, fov: lerp(30, 27, k), roll: 0, fstop: lerp(5.6, 4, k), focus: null };
+    // сверху-сбоку и чуть дальше: пластина между слоями пены читается как «бутерброд», видно плетение
+    const from = orbit([0, 1.75, 0], 0.38, 6.2, 1.7), to = add3(P, [Math.sin(0.38) * 1.75, 0.45, Math.cos(0.38) * 1.75]);
+    S.cam = { pos: mix3(from, to, k), target: P, fov: lerp(30, 28, k), roll: 0, fstop: lerp(5.6, 8, k), focus: null };
+    // полоса поперёк движения: блик пересекает пластину слева направо
     const xs = lerp(-2.2, 2.4, seg(t, 16.3, 17.0));
-    S.light = { key: 0.1, rimL: 4, rimR: 4, top: 60, env: 0.05, sweep: bar([xs, P[1] + 0.35, 1.7], [xs, P[1], 0], 2.4, 0.12, 60) };
+    S.light = { key: 0.12, rimL: 4, rimR: 4, top: 50, env: 0.05, sweep: bar([xs, P[1] + 0.6, 1.6], [xs, P[1], 0], 0.12, 2.4, 70) };
   },
   // ---- 17–19: сборка со щелчком, шнурки улетают; кроссовок опускается на пол
   assemble(t, S) {
