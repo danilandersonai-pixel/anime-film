@@ -5,7 +5,6 @@
 // треск неона — по его провалам.
 import { DURATION5, IMPACT5, SHOTS5, SIM, actionTime5, simTime, evaluate5, LIGHTNING, NEON_FLICKER } from './timeline5.js';
 import { dripLandings } from './drips5.js';
-export { toWav } from './audio.js';
 
 export const LENGTH5 = DURATION5;
 const N = (m) => 440 * Math.pow(2, (m - 69) / 12);
@@ -398,4 +397,18 @@ function build(ctx) {
   kick(23, 1.2); sub(23, 28, 2.6, 0.7); crash(23, 0.12, 2.8); clap(23, 0.3);
   pad(23, 3.05, [40, 52, 55, 59, 62, 66], 0.02, 0.05, 1600);
   bell(23.7, 83, 0.09, 3); bell(23.92, 88, 0.07, 3);
+}
+
+// AudioBuffer → WAV (16 бит) — для MP4 и для проверки
+export function toWav(buf) {
+  const ch = buf.numberOfChannels, len = buf.length, sr = buf.sampleRate;
+  const out = new DataView(new ArrayBuffer(44 + len * ch * 2));
+  const w = (o, s) => { for (let i = 0; i < s.length; i++) out.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); out.setUint32(4, 36 + len * ch * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+  out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, ch, true); out.setUint32(24, sr, true);
+  out.setUint32(28, sr * ch * 2, true); out.setUint16(32, ch * 2, true); out.setUint16(34, 16, true); w(36, 'data'); out.setUint32(40, len * ch * 2, true);
+  const data = []; for (let c = 0; c < ch; c++) data.push(buf.getChannelData(c));
+  let o = 44;
+  for (let i = 0; i < len; i++) for (let c = 0; c < ch; c++) { const v = Math.max(-1, Math.min(1, data[c][i])); out.setInt16(o, v < 0 ? v * 0x8000 : v * 0x7fff, true); o += 2; }
+  return out.buffer;
 }

@@ -4,7 +4,6 @@
 // проезжающая машина, молния, низкий туман, камешки и листья.
 import * as THREE from 'three';
 import { Reflector } from 'three/addons/objects/Reflector.js';
-import { CITY_LIGHTS } from './citylights.js';
 import { rng } from './textures.js';
 
 const TILE = 15;          // скан 3 × 3 м уложен плиткой 1,5 м: зерно асфальта мельче и чётче вблизи
@@ -32,7 +31,7 @@ function asphaltMaterial(A, reflector, texMatrix, shadow) {
     tShadow: { value: shadow.texture }, shadowSize: { value: shadow.size }, shadowOpacity: { value: 0.9 },
     uTile: { value: 1 / TILE }, uRainT: { value: 0 }, uRain: { value: 1 }, uReflect: { value: 1 },
     uPuddle: { value: new THREE.Vector3(PUDDLE.x, PUDDLE.z, PUDDLE.r2) },
-    uRing: { value: 0 }, uRingR: { value: 0 }, uRingC: { value: new THREE.Vector2(-1.3, 0) },
+    uRings: { value: Array.from({ length: 8 }, () => new THREE.Vector4(0, 0, 0, 0)) }, // кольца на воде: x, z, радиус, сила
   };
   const m = new THREE.MeshPhysicalMaterial({ color: '#ffffff', roughness: 0.6, metalness: 0, envMapIntensity: 0.18 });
   m.userData.uniforms = U;
@@ -42,8 +41,8 @@ function asphaltMaterial(A, reflector, texMatrix, shadow) {
       '#include <fog_vertex>\n  vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\n  vReflUv = uTexMatrix * vec4(transformed, 1.0);');
     sh.fragmentShader = `
       uniform sampler2D tCol, tNor, tRD, tReflect, tShadow;
-      uniform float uTile, uRainT, uRain, uReflect, shadowSize, shadowOpacity, uRing, uRingR;
-      uniform vec3 uPuddle; uniform vec2 uRingC;
+      uniform float uTile, uRainT, uRain, uReflect, shadowSize, shadowOpacity;
+      uniform vec3 uPuddle; uniform vec4 uRings[8];
       varying vec4 vReflUv; varying vec3 vWPos;
       float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
       // круги от капель: три слоя ячеек, в каждой капля падает в своё время
@@ -86,7 +85,7 @@ function asphaltMaterial(A, reflector, texMatrix, shadow) {
         // разметка: стёртая белая полоса, краска осталась на выступах
         float band = 1.0 - smoothstep(0.55, 0.62, abs(vWPos.z + 2.9));
         wPaint = band * smoothstep(0.5, 0.62, wH) * (1.0 - wWater) * step(-40.0, vWPos.x);
-        vec3 base = aCol * mix(0.36, 0.2, wWater);
+        vec3 base = aCol * mix(0.2, 0.09, wWater);
         base = mix(base, vec3(0.5, 0.5, 0.48) * (0.75 + 0.5 * aCol.r), wPaint);
         diffuseColor.rgb = base;`)
       .replace('#include <roughnessmap_fragment>', `
@@ -97,8 +96,12 @@ function asphaltMaterial(A, reflector, texMatrix, shadow) {
         vec3 nD = texture2D(tNor, auv * 4.0 + 0.5).xyz * 2.0 - 1.0;
         wNT = vec3((nA.xy * 1.2 + nD.xy * 0.5) * (1.0 - 0.92 * wWater), 1.0);
         vec2 rip = ripples(wuv, uRainT) * uRain * (0.25 + 0.75 * wWater);
-        vec2 rd2 = wuv - uRingC; float rl = length(rd2) + 1e-4; float rx = (rl - uRingR) / 0.07;
-        rip += rd2 / rl * sin(rx * 2.6) * exp(-rx * rx * 0.5) * uRing * 0.9 * (0.3 + 0.7 * wWater);
+        for (int k = 0; k < 8; k++) { // кольца от ударов подошвы и от капель с неё
+          vec4 R = uRings[k];
+          if (R.w <= 0.0) continue;
+          vec2 rd2 = wuv - R.xy; float rl = length(rd2) + 1e-4; float rx = (rl - R.z) / 0.07;
+          rip += rd2 / rl * sin(rx * 2.6) * exp(-rx * rx * 0.5) * R.w * 0.9 * (0.3 + 0.7 * wWater);
+        }
         wNT = normalize(wNT + vec3(rip, 0.0));
         mat3 wTBN = mat3(normalize((viewMatrix * vec4(1.0, 0.0, 0.0, 0.0)).xyz), normalize((viewMatrix * vec4(0.0, 0.0, -1.0, 0.0)).xyz), normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz));
         normal = normalize(wTBN * wNT);`)
@@ -227,30 +230,12 @@ function makeSplashes(N = 700) {
   return mesh;
 }
 
-// круглое боке: диск с чуть более ярким краем, как у настоящего объектива
-function bokehTexture() {
-  const c = document.createElement('canvas'); c.width = c.height = 128;
-  const x = c.getContext('2d'), img = x.createImageData(128, 128), d = img.data;
-  for (let j = 0; j < 128; j++) for (let i = 0; i < 128; i++) {
-    const r = Math.hypot(i - 63.5, j - 63.5) / 60;
-    const disc = Math.max(0, Math.min(1, (1 - r) * 14));
-    const rim = Math.exp(-((r - 0.9) ** 2) / 0.004) * 0.35;
-    const v = Math.min(1, disc * (0.62 + 0.25 * r * r) + rim * disc);
-    const k = (j * 128 + i) * 4; d[k] = d[k + 1] = d[k + 2] = v * 255; d[k + 3] = 255;
-  }
-  x.putImageData(img, 0, 0);
-  return new THREE.CanvasTexture(c);
-}
-
-// анаморфный блик фары: тонкая горизонтальная полоса
-function flareTexture() {
-  const c = document.createElement('canvas'); c.width = 256; c.height = 32;
-  const x = c.getContext('2d'), g = x.createLinearGradient(0, 0, 256, 0);
-  g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.5, 'rgba(255,255,255,1)'); g.addColorStop(1, 'rgba(255,255,255,0)');
-  x.fillStyle = g; x.fillRect(0, 0, 256, 32);
-  const v = x.createLinearGradient(0, 0, 0, 32);
-  v.addColorStop(0, 'rgba(0,0,0,1)'); v.addColorStop(0.5, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,1)');
-  x.globalCompositeOperation = 'destination-out'; x.fillStyle = v; x.fillRect(0, 0, 256, 32);
+// огонёк: маленькое мягкое пятно; в боке его разворачивает глубина резкости
+function dotTexture() {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const x = c.getContext('2d'), g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.35, 'rgba(255,255,255,0.55)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  x.fillStyle = g; x.fillRect(0, 0, 64, 64);
   return new THREE.CanvasTexture(c);
 }
 
@@ -359,28 +344,28 @@ export function createStreet({ scene, width, height, pixelRatio, shadow, asphalt
   const mist = makeMist(); scene.add(mist);
   const debris = makeDebris(); scene.add(debris);
 
-  // огни города: диски боке там же, где огни на панораме
-  const bok = bokehTexture(), city = new THREE.Group();
-  const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), BG_YAW);
-  const r = rng(515);
-  for (const [dx, dy, dz, cr, cg, cb, L] of CITY_LIGHTS.slice(0, 110)) {
-    const d = new THREE.Vector3(dx, dy, dz).applyQuaternion(q);
-    const k = Math.min(1, 0.25 + 0.2 * Math.log10(L)), s = 0.7 + r() * 0.9 + 0.3 * Math.log10(L);
-    const sp = glowSprite(bok, new THREE.Color(cr, cg, cb).multiplyScalar(0.2 * k), s);
-    sp.position.copy(d.multiplyScalar(95)); sp.position.y = Math.max(sp.position.y, 0.5 + r() * 2);
-    city.add(sp);
+  // Огни — маленькие яркие точки с HDR-яркостью: в боке их превращает объектив
+  // (глубина резкости в stage.js), как на настоящей съёмке, а не нарисованные диски.
+  const dot = dotTexture();
+  // живой фон: далёкие машины на двух улицах за кроссовком — фары и стоп-сигналы плывут в боке
+  const traffic = new THREE.Group(), r = rng(515), TR = [];
+  for (let i = 0; i < 14; i++) {
+    const far = i % 2, dir = r() < 0.5 ? 1 : -1, z = far ? -118 - r() * 10 : -72 - r() * 6;
+    const head = glowSprite(dot, new THREE.Color('#fff1dc').multiplyScalar(1.4 + 1.2 * r()), 0.9);
+    const tail = glowSprite(dot, new THREE.Color('#ff2414').multiplyScalar(1.1 + 0.9 * r()), 0.8);
+    traffic.add(head, tail);
+    TR.push({ head, tail, dir, z, y: 5.5 + r() * 1.5, v: 70 + r() * 90, x0: r() * 360 });
   }
-  scene.add(city);
+  scene.add(traffic);
 
-  // машина: пара фар, блики-полосы, задние огни; свет фар — прожектор с тенью
-  const flare = flareTexture(), car = new THREE.Group();
-  const heads = [-0.8, 0.8].map((o) => { const s = glowSprite(bok, new THREE.Color('#fff4e2').multiplyScalar(1.6), 1.5); s.userData.o = o; car.add(s); return s; });
-  const streaks = [-0.8, 0.8].map((o) => { const s = glowSprite(flare, new THREE.Color('#bcd8ff').multiplyScalar(0.9), 1); s.scale.set(18, 0.55, 1); s.userData.o = o; car.add(s); return s; });
-  const tails = [-0.8, 0.8].map((o) => { const s = glowSprite(bok, new THREE.Color('#ff2a1a').multiplyScalar(1.4), 1.6); s.userData.o = o; car.add(s); return s; });
+  // машина за кроссовком (как в Cycles): две фары, два стоп-сигнала, свет фар — прожектор с тенью
+  const car = new THREE.Group();
+  const heads = [-0.8, 0.8].map((o) => { const s = glowSprite(dot, new THREE.Color('#fff4e2').multiplyScalar(40), 1.6); s.userData.o = o; car.add(s); return s; });
+  const tails = [-0.8, 0.8].map((o) => { const s = glowSprite(dot, new THREE.Color('#ff1a0a').multiplyScalar(30), 1.3); s.userData.o = o; car.add(s); return s; });
   scene.add(car);
-  const carLight = new THREE.SpotLight('#fff1dc', 0, 0, 0.35, 0.6, 2);
+  const carLight = new THREE.SpotLight('#fff1dc', 0, 0, 0.35, 0.5, 2);
   carLight.castShadow = true; carLight.shadow.mapSize.set(1024, 1024); carLight.shadow.bias = -0.0004;
-  carLight.shadow.camera.near = 5; carLight.shadow.camera.far = 80;
+  carLight.shadow.camera.near = 20; carLight.shadow.camera.far = 90; carLight.shadow.focus = 0.4;
   carLight.target.position.set(0, 0.4, 0);
   scene.add(carLight, carLight.target);
 
@@ -393,46 +378,50 @@ export function createStreet({ scene, width, height, pixelRatio, shadow, asphalt
     side: THREE.BackSide, transparent: true, depthWrite: false, fog: false,
     uniforms: { uColor: { value: new THREE.Color('#0e1019') } },
     vertexShader: 'varying float vY; void main(){ vY = position.y; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-    fragmentShader: 'uniform vec3 uColor; varying float vY; void main(){ float a = 1.0 - smoothstep(-2.0, 9.0, vY); gl_FragColor = vec4(uColor, a * 0.92); }',
+    fragmentShader: 'uniform vec3 uColor; varying float vY; void main(){ float a = 1.0 - smoothstep(-2.0, 9.0, vY); gl_FragColor = vec4(uColor, a * 0.35); }',
   }));
   haze.position.y = 0; haze.renderOrder = -1;
   scene.add(haze);
 
   const hideInReflection = [splashes, mist];
 
-  function update(S, rimL, rimR) {
-    const st = S.street;
-    U.uRainT.value = st.rainT; U.uRain.value = st.rain; U.uReflect.value = st.reflect;
-    U.uRing.value = S.ring.amt; U.uRingR.value = S.ring.r; if (S.ring.c) U.uRingC.value.set(S.ring.c[0], S.ring.c[1]);
+  // S — состояние кадра evaluate5(t); lights — до трёх источников, в чьём свете видны струи
+  // дождя ([позиция, цвет×яркость]); rings — кольца на воде [x, z, возраст, сила]
+  function update(S, lights = [], rings = []) {
+    const st = S.street, L = S.light;
+    U.uRainT.value = st.rainT; U.uRain.value = st.rain; U.uReflect.value = 1;
+    const R = rings.slice().sort((a, b) => a[2] - b[2]).slice(0, 8);
+    U.uRings.value.forEach((v, i) => { const q = R[i]; if (q) v.set(q[0], q[1], 0.12 + 2.4 * q[2], q[3] * Math.exp(-q[2] * 1.4) * 0.9); else v.set(0, 0, 0, 0); });
     const rm = rain.material.uniforms;
     rm.uT.value = st.rainT; rm.uAmt.value = st.rain;
     rm.uCenter.value.set(S.cam.target[0] * 0.6, 0, S.cam.target[2] * 0.6);
-    rm.uL.value[0].copy(rimL.position); rm.uC.value[0].copy(rimL.color).multiplyScalar(Math.min(1, rimL.intensity / 14));
-    rm.uL.value[1].copy(rimR.position); rm.uC.value[1].copy(rimR.color).multiplyScalar(Math.min(1, rimR.intensity / 16));
+    for (let k = 0; k < 3; k++) {
+      if (lights[k]) { rm.uL.value[k].copy(lights[k][0]); rm.uC.value[k].copy(lights[k][1]); } else rm.uC.value[k].setRGB(0, 0, 0);
+    }
     splashes.material.uniforms.uT.value = st.rainT; splashes.material.uniforms.uAmt.value = st.rain;
-    mist.userData.mat.uniforms.uT.value = S.t; mist.userData.mat.uniforms.uAmt.value = st.mist;
+    mist.userData.mat.uniforms.uT.value = S.t; mist.userData.mat.uniforms.uAmt.value = 0.015 + 0.05 * L.lightning;
     mist.children.forEach((m) => { m.rotation.y = Math.atan2(S.cam.pos[0] - m.position.x, S.cam.pos[2] - m.position.z) * 0.6; });
-    city.children.forEach((s) => { s.material.opacity = st.bokeh; });
-    // машина
+    // далёкие машины едут всё время ролика
+    for (const c of TR) {
+      const x = ((c.x0 + c.v * S.t) % 360) - 180, X = c.dir * x;
+      c.head.position.set(X, c.y, c.z); c.tail.position.set(X - c.dir * 40, c.y - 0.4, c.z - 1);
+    }
+    // машина за кроссовком: те же координаты, что в Cycles
     const c = st.car;
     car.visible = c.on > 0;
     if (car.visible) {
-      const x = c.dir * (c.p * 130 - 65), z = -36, y = 6.4;
-      const toCam = new THREE.Vector3(S.cam.pos[0] - x, 0, S.cam.pos[2] - z).normalize();
-      const side = new THREE.Vector3(-toCam.z, 0, toCam.x);
-      heads.forEach((s, i) => { s.position.set(x + side.x * s.userData.o * 7, y, z + side.z * s.userData.o * 7); s.material.opacity = c.on * c.head; });
-      streaks.forEach((s, i) => { s.position.copy(heads[i].position); s.material.opacity = c.on * c.head * 0.45; });
-      tails.forEach((s) => { s.position.set(x - c.dir * 40 + side.x * s.userData.o * 7, 6, z - 2 + side.z * s.userData.o * 7); s.material.opacity = c.on * c.tail; });
-      carLight.position.set(x, y, z);
-      carLight.intensity = c.on * c.head * 4200;
+      const x = c.dir * (c.p * 130 - 65) * 1.3;
+      heads.forEach((s) => s.position.set(x, 6.4, -48 + s.userData.o * 7));
+      tails.forEach((s) => s.position.set(x - c.dir * 40, 6.0, -50 + s.userData.o * 7));
+      carLight.position.copy(heads[1].position);
+      carLight.intensity = 2600;
       carLight.shadow.autoUpdate = true;
-      rm.uL.value[2].copy(heads[0].position); rm.uC.value[2].set('#fff1dc').multiplyScalar(c.on * c.head * 1.4);
-    } else { carLight.intensity = 0; carLight.shadow.autoUpdate = false; rm.uC.value[2].setRGB(0, 0, 0); }
-    sky.intensity = st.lightning * 3.5;
-    scene.backgroundIntensity = st.bg * (1 + st.lightning * 5);
+    } else { carLight.intensity = 0; carLight.shadow.autoUpdate = false; }
+    sky.intensity = L.lightning * 3.5;
   }
+  const carHead = () => (car.visible ? heads[1].position : null);
 
   function setSize(w, h, pr) { reflector.getRenderTarget().setSize(Math.round(w * pr * 0.5), Math.round(h * pr * 0.5)); }
 
-  return { reflector, floor: mat, uniforms: U, rain, splashes, mist, city, car, carLight, sky, debris, hideInReflection, update, setSize };
+  return { reflector, floor: mat, uniforms: U, rain, splashes, mist, traffic, car, carLight, carHead, sky, debris, hideInReflection, update, setSize };
 }

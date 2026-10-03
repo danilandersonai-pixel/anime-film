@@ -1,10 +1,11 @@
-// stage.js — сцена: ночная улица (street.js), свет, контактная тень, постобработка.
+// stage.js — сцена v5: ночная улица (street.js), свет только от того, что светит на улице
+// (витрина, натриевый фонарь, неон, молния, фары — как в Blender Cycles), контактная тень,
+// оптика (глубина резкости dof.js, дисторсия, хроматизм) и цвет AgX, как у Cycles.
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
@@ -12,6 +13,7 @@ import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { HorizontalBlurShader } from 'three/addons/shaders/HorizontalBlurShader.js';
 import { VerticalBlurShader } from 'three/addons/shaders/VerticalBlurShader.js';
 import { createStreet, BG_YAW } from './street.js';
+import { DofPass } from './dof.js';
 
 const SHOE_LAYER = 1;
 
@@ -19,21 +21,23 @@ const SHOE_LAYER = 1;
 // мягкая плёночная кривая (приподнятый чёрный, тени холоднее, света теплее),
 // виньетка, зерно сильнее в средних тонах, вспышка, затемнение
 const FinalShader = {
-  uniforms: { tDiffuse: { value: null }, time: { value: 0 }, flash: { value: 0 }, fade: { value: 0 }, vignette: { value: 0.9 }, grain: { value: 0.045 }, aberr: { value: 0.0018 }, aspect: { value: 16 / 9 } },
+  uniforms: { tDiffuse: { value: null }, time: { value: 0 }, flash: { value: 0 }, fade: { value: 0 }, vignette: { value: 0.75 }, grain: { value: 0.04 }, aberr: { value: 0.0016 }, distort: { value: -0.012 }, contrast: { value: 0.28 }, aspect: { value: 16 / 9 } },
   vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
   fragmentShader: `
-    uniform sampler2D tDiffuse; uniform float time, flash, fade, vignette, grain, aberr, aspect; varying vec2 vUv;
+    uniform sampler2D tDiffuse; uniform float time, flash, fade, vignette, grain, aberr, distort, contrast, aspect; varying vec2 vUv;
     float hash(vec2 p){ p = fract(p * vec2(443.897, 441.423)); p += dot(p, p.yx + 19.19); return fract((p.x + p.y) * p.x); }
     void main(){
       vec2 c = vUv - 0.5;
       float r2 = dot(c * vec2(aspect, 1.0), c * vec2(aspect, 1.0));
+      // бочкообразная дисторсия объектива (как Lens Distortion в Cycles), края подрезаются
+      vec2 uv = 0.5 + c * (1.0 + distort * r2) / (1.0 + distort * 0.6);
       vec2 off = c * aberr * (0.5 + r2 * 2.0);
-      vec3 col = vec3(texture2D(tDiffuse, vUv + off).r, texture2D(tDiffuse, vUv).g, texture2D(tDiffuse, vUv - off).b);
+      vec3 col = vec3(texture2D(tDiffuse, uv + off).r, texture2D(tDiffuse, uv).g, texture2D(tDiffuse, uv - off).b);
       col = clamp(col, 0.0, 1.0);
       float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
-      col = mix(col, col * col * (3.0 - 2.0 * col), 0.12);
+      col = mix(col, col * col * (3.0 - 2.0 * col), contrast);
       col += vec3(-0.006, 0.0, 0.01) * (1.0 - l) + vec3(0.01, 0.003, -0.008) * l;
-      col = col * 0.985 + 0.006;
+      col = col * 0.996 + 0.002;
       col *= mix(1.0, smoothstep(1.35, 0.15, r2 * 1.1), vignette);
       float g = hash(floor(vUv * vec2(1371.0, 771.0)) * 0.73 + fract(time * 7.13) * 91.0) - 0.5;
       col += g * grain * (0.55 + 1.8 * l * (1.0 - l));
@@ -47,8 +51,8 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
   renderer.setPixelRatio(pixelRatio);
   renderer.setSize(width, height, false);
-  renderer.toneMapping = THREE.NeutralToneMapping; // честные цвета продукта
-  renderer.toneMappingExposure = 1.0;
+  renderer.toneMapping = THREE.AgXToneMapping;    // как «AgX» в Blender: светлое не выгорает в белое
+  renderer.toneMappingExposure = Math.pow(2, 0.3); // экспозиция +0,3, как в Cycles
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -62,9 +66,10 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
   scene.environmentIntensity = 0.3;
 
   // ---- ночной воздух: дальний асфальт тонет в дымке
-  scene.fog = new THREE.FogExp2('#0e1019', 0.02);
-  scene.backgroundBlurriness = 0.09;
+  scene.fog = new THREE.FogExp2('#0b0d14', 0.006);
+  scene.backgroundBlurriness = 0; // фон резкий — размывает его объектив (dof.js)
   scene.backgroundRotation.set(0, BG_YAW, 0);
+  scene.environmentRotation.set(0, BG_YAW, 0); // отражения — от того же города, что на фоне
 
   // ---- контактная тень: глубина снизу, размытая (как в примере three.js)
   const SH = { size: 7, height: 1.6 };
@@ -114,26 +119,30 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
     hideInReflection.forEach((o, i) => (o.visible = st[i]));
   };
   // дождь, брызги, туман и спрайты — не твёрдые тела: их не должно быть в буферах глубины
-  for (const o of [street.rain, street.splashes, street.mist, street.city, street.car]) o.traverse((x) => { x.userData.soft = true; });
-  const soft = [];
-  const hideSoft = () => { soft.length = 0; scene.traverse((o) => { if (o.userData.soft && o.visible) { soft.push(o); o.visible = false; } }); };
-  const showSoft = () => { soft.forEach((o) => (o.visible = true)); };
+  for (const o of [street.rain, street.splashes, street.mist, street.traffic, street.car]) o.traverse((x) => { x.userData.soft = true; });
 
-  // ---- свет
-  const key = new THREE.RectAreaLight('#fff4ea', 5, 3.2, 1.6);
-  key.position.set(1.2, 4.2, 3.4); key.lookAt(0, 0.4, 0);
-  const rimL = new THREE.RectAreaLight('#3d8bff', 14, 0.35, 3.2);
-  rimL.position.set(-3.2, 1.6, -2.4); rimL.lookAt(0, 0.6, 0);
-  const rimR = new THREE.RectAreaLight('#ff6a2a', 16, 0.35, 3.2);
-  rimR.position.set(3.4, 1.5, -2.2); rimR.lookAt(0, 0.6, 0);
-  const sweep = new THREE.RectAreaLight('#ffffff', 0, 0.12, 2.6);
-  sweep.position.set(0, 1.4, 2.2); sweep.lookAt(0, 0.5, 0);
-  const sun = new THREE.DirectionalLight('#ffffff', 0.9);
-  sun.position.set(1.5, 5, 2.5); sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.01;
-  Object.assign(sun.shadow.camera, { left: -2.2, right: 2.2, top: 2.2, bottom: -2.2, near: 0.5, far: 12 });
-  sun.shadow.camera.layers.set(SHOE_LAYER);
-  scene.add(key, rimL, rimR, sweep, sun, sun.target);
+  // ---- свет: только то, что светит на ночной улице. Яркости — в тех же единицах, что в Cycles:
+  // площадной — яркость поверхности P/(πA), прожектор — сила света P/(4π), солнце — освещённость.
+  const TGT = new THREE.Vector3(0, 0.4, 0);
+  const area = (color, w, h, pos) => { const l = new THREE.RectAreaLight(color, 0, w, h); l.position.set(...pos); l.lookAt(TGT); return l; };
+  const win = area('#ffdbb8', 6, 4, [2.8, 2.6, 6.8]);              // витрина: тёплый мягкий ключ спереди
+  const neonPink = area('#ff4096', 8, 0.35, [-6.8, 2.2, 3.4]);     // неоновая вывеска: розовая трубка
+  const neonCyan = area('#40d8ff', 6, 0.3, [-6.5, 3.0, 4.2]);      // и голубая
+  const lamp = new THREE.SpotLight('#ffad5c', 0, 0, THREE.MathUtils.degToRad(27.5), 0.6, 2); // натриевый фонарь сзади сверху
+  lamp.position.set(-4, 30, -15); lamp.target.position.set(0, 0, 0);
+  lamp.castShadow = true; lamp.shadow.mapSize.set(2048, 2048); lamp.shadow.bias = -0.0002; lamp.shadow.normalBias = 0.01;
+  lamp.shadow.focus = 0.16; lamp.shadow.radius = 4; lamp.shadow.camera.near = 25; lamp.shadow.camera.far = 45;
+  lamp.shadow.camera.layers.set(SHOE_LAYER);
+  scene.add(win, neonPink, neonCyan, lamp, lamp.target);
+  const lights = { win, neonPink, neonCyan, lamp };
+  // свет кадра: L — S.light из timeline5 (window, lamp, neon, env, lightning)
+  function setLights(L) {
+    win.intensity = 2.0 * L.window;
+    lamp.intensity = 637 * L.lamp;
+    neonPink.intensity = 13.6 * L.neon; neonCyan.intensity = 14.1 * L.neon;
+    const w = 0.17 * L.env * (1 + 5 * L.lightning);
+    scene.environmentIntensity = w; scene.backgroundIntensity = w;
+  }
 
   // ---- постобработка
   const Q = new URLSearchParams(location.search);
@@ -151,11 +160,10 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
   gtao.enabled = !Q.has('noao');
   const ovGtao = gtao.overrideVisibility.bind(gtao);
   gtao.overrideVisibility = function () { ovGtao(); scene.traverse((o) => { if (o.userData.soft) o.visible = false; }); };
-  const bokeh = new BokehPass(scene, camera, { focus: 3, aperture: 0.002, maxblur: 0.006 });
-  bokeh.enabled = false;
-  const bokehRender = bokeh.render.bind(bokeh);
-  bokeh.render = function (...a) { hideSoft(); bokehRender(...a); showSoft(); };
-  const bloom = new UnrealBloomPass(new THREE.Vector2(width, height), 0.5, 0.6, 0.92);
+  // глубина резкости: глубину даёт проход нормалей GTAO (без дождя и спрайтов)
+  const dof = new DofPass(camera, width * pixelRatio, height * pixelRatio);
+  dof.depthTexture = gtao.depthTexture;
+  const bloom = new UnrealBloomPass(new THREE.Vector2(width, height), 0.32, 0.6, 0.92); // как Fog Glow в Cycles — мягкий ореол у ярких огней
   // широкие слои свечения теплее — как ореол (халация) вокруг бликов на плёнке
   [[1, 1, 1], [1, 0.96, 0.92], [1, 0.88, 0.78], [1, 0.8, 0.66], [1, 0.74, 0.58]].forEach((c, i) => bloom.bloomTintColors[i].set(...c));
   const output = new OutputPass();
@@ -163,7 +171,7 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
   // композитор рисует только сцену (в линейной яркости); свечение, вывод и обработка — один раз
   // после усреднения подкадров, иначе смаз движения пришлось бы считать пять раз
   composer.renderToScreen = false;
-  composer.addPass(renderPass); composer.addPass(gtao); composer.addPass(bokeh);
+  composer.addPass(renderPass); composer.addPass(gtao); composer.addPass(dof);
   const hdrOpts = { type: THREE.HalfFloatType };
   const accA = new THREE.WebGLRenderTarget(width * pixelRatio, height * pixelRatio, hdrOpts), accB = accA.clone(), ldr = accA.clone();
   const avgMat = new THREE.ShaderMaterial({
@@ -183,14 +191,16 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
     street.setSize(w, h, pr);
     for (const t of [accA, accB, ldr]) t.setSize(Math.round(w * pr), Math.round(h * pr));
     bloom.setSize(Math.round(w * pr), Math.round(h * pr));
+    dof.setSize(Math.round(w * pr), Math.round(h * pr));
     final.uniforms.aspect.value = w / h;
   }
 
   // панорама ночного города: она и фон (размытый, как на длинном объективе), и окружение для отражений
+  const env = { tex: null };
   function setEnvironment(tex) {
-    const env = pmrem.fromEquirectangular(tex).texture;
-    scene.environment = env; scene.background = env;
-    tex.dispose();
+    scene.environment = pmrem.fromEquirectangular(tex).texture;
+    scene.background = tex; // сама панорама — резкая: в боке её превращает объектив
+    env.tex = tex;           // её же видно сквозь капли (watermat.js)
   }
 
   // помечаем меши кроссовка, чтобы их видела камера тени
@@ -206,6 +216,8 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
     for (let i = 0; i < n; i++) {
       if (setSub) setSub(i);
       renderContactShadow(3.2);
+      // глубине резкости нужна глубина кадра, даже если затенение в щелях выключено
+      if (!gtao.enabled && dof.enabled) { gtao.overrideVisibility(); gtao.renderOverride(renderer, gtao.normalMaterial, gtao.normalRenderTarget, 0x7777ff, 1.0); gtao.restoreVisibility(); }
       composer.render();
       const cur = composer.readBuffer;
       if (n === 1) { acc = cur; break; }
@@ -221,7 +233,7 @@ export function createStage(canvas, { width = 1920, height = 1080, pixelRatio = 
 
   return {
     renderer, scene, camera, composer, adopt, render, setSize, setEnvironment, street,
-    lights: { key, rimL, rimR, sweep, sun }, gtao, bloom, bokeh, final, shadowCam,
+    lights, setLights, gtao, bloom, dof, final, shadowCam, env,
   };
 }
 

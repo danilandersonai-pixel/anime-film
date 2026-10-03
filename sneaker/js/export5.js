@@ -5,12 +5,12 @@ import * as THREE from 'three';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { buildShoe, shoeTransform, top } from './shoe.js';
-import { scans, rng } from './textures.js';
+import { scans } from './textures.js';
 import { evaluate5, setRig5, DURATION5, IMPACTS, REST, SIM } from './timeline5.js';
 import { makeDebris } from './street.js';
+import { splashAt } from './splash5.js';
 import { dripsAt } from './drips5.js';
 
-const G = 98;
 
 // InstancedMesh → обычная геометрия (у Blender своя система экземпляров, проще запечь)
 function bakeInstances(root) {
@@ -34,30 +34,6 @@ function exportGLB(obj) {
 }
 const b64 = (buf) => { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
 
-// ---- брызги: корона капель по баллистике (как в water.js), от каждого удара
-const SPL = (() => {
-  const r = rng(321), out = [];
-  for (const [n, imp] of [[380, IMPACTS[0]], [200, IMPACTS[1]]]) {
-    for (let i = 0; i < n; i++) {
-      const a = r() * Math.PI * 2, crown = r() < 0.6;
-      out.push({ imp, a, vh: (crown ? 6 + r() * 7 : 2 + r() * 6) * imp.power, vv: (crown ? 3 + r() * 5 : 6 + r() * 11) * imp.power, rad: 0.009 + 0.032 * Math.pow(r(), 2.2), d0: r() * 0.015, off: crown ? 0.18 + r() * 0.25 : 0.04 + r() * 0.15 });
-    }
-  }
-  return out;
-})();
-function splashAt(s) {
-  const P = [];
-  for (const p of SPL) {
-    const sg = s - p.imp.s - p.d0;
-    if (sg <= 0) continue;
-    const y = p.vv * sg - 0.5 * G * sg * sg;
-    if (y < -0.005) continue;
-    const ca = Math.cos(p.a), sa = Math.sin(p.a);
-    const v = [ca * p.vh, p.vv - G * sg, sa * p.vh];
-    P.push([p.imp.x + ca * (p.off + p.vh * sg), 0.01 + y, p.imp.z + sa * (p.off + p.vh * sg) * 1.2, p.rad, ...v]);
-  }
-  return P;
-}
 export async function exportAll() {
   let jersey = null; try { jersey = await scans(); } catch (e) { /* без скана */ }
   const out = { glb: {}, frames: [], meta: {} };
