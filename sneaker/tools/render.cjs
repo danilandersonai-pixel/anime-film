@@ -1,6 +1,6 @@
 // Рендер ролика в MP4 со звуком: node tools/render.cjs [out.mp4] [--fps 24] [--audio-only]
 // Каждый кадр рисует невидимый Chromium (WebGL), ffmpeg собирает видео,
-// звук синтезирует тот же audio.js (OfflineAudioContext) и выравнивается до −14 LUFS.
+// звук синтезирует тот же audio5.js (OfflineAudioContext) и выравнивается до −14 LUFS.
 const fs = require('fs'), path = require('path'), os = require('os');
 const { spawn, spawnSync, execFileSync } = require('child_process');
 const { openPage } = require('./serve.cjs');
